@@ -44,3 +44,17 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 
 export const rupee = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; slippagePct: number }
+export interface AppSettings {
+  lists: Record<'large' | 'mid' | 'small', ListRules>;
+  dailyLossCap: number;
+  requireAboveVwap: boolean;
+  newsFilter: boolean;
+}
+export interface Pick {
+  symbol: string; ltp: number; changePct: number; aboveVwap?: boolean;
+  signals: { pattern: string; reason: string; score: number; stopPct: number }[];
+  news?: { score: number; resultsSoon: boolean; headlines: { title: string; source: string; link: string; ts: number }[] };
+  verdict: 'buy' | 'watch' | 'avoid'; why: string; score: number;
+}

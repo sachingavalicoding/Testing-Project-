@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import Chart from './Chart.tsx';
+import Picks from './Picks.tsx';
+import Settings from './Settings.tsx';
 import { get, post, rupee, type EventRow, type Mover, type Status, type Trade } from './api.ts';
 
-type Tab = 'home' | 'movers' | 'chart' | 'trades' | 'log';
+type Tab = 'home' | 'picks' | 'movers' | 'chart' | 'trades' | 'settings';
 
 interface Live { status: Status; movers: { gainers: Mover[]; losers: Mover[] } }
 
@@ -58,16 +60,23 @@ export default function App() {
       {meta?.feedError && <div className="mb-3 rounded bg-amber-900/50 p-2 text-xs">Feed: {meta.feedError}</div>}
 
       {tab === 'home' && s && <Home s={s} meta={meta} act={act} openChart={openChart} />}
+      {tab === 'picks' && <Picks onPick={openChart} />}
       {tab === 'movers' && live && <Movers movers={live.movers} onPick={openChart} />}
       {tab === 'chart' && <ChartTab symbol={symbol} setSymbol={setSymbol} />}
       {tab === 'trades' && <Trades />}
-      {tab === 'log' && <Log />}
+      {tab === 'settings' && (
+        <div className="space-y-3">
+          <Settings />
+          <h2 className="pt-2 font-semibold">Activity log</h2>
+          <Log />
+        </div>
+      )}
       {!s && tab === 'home' && <p className="text-slate-400">Connecting to server…</p>}
 
       <nav className="fixed inset-x-0 bottom-0 flex border-t border-slate-800 bg-slate-950">
-        {(['home', 'movers', 'chart', 'trades', 'log'] as Tab[]).map((t) => (
+        {(['home', 'picks', 'movers', 'chart', 'trades', 'settings'] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-sm capitalize ${tab === t ? 'text-sky-400' : 'text-slate-400'}`}>{t}</button>
+            className={`flex-1 py-3 text-xs capitalize ${tab === t ? 'text-sky-400' : 'text-slate-400'}`}>{t}</button>
         ))}
       </nav>
     </div>

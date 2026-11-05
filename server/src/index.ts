@@ -11,6 +11,8 @@ import { MockFeed } from './market/mockFeed.ts';
 import { MarketStore } from './market/store.ts';
 import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
+import { loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
+import { NewsService, shouldBlock } from './news/news.ts';
 import { AutoTrader } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
@@ -31,15 +33,22 @@ if (config.upstox.apiKey) {
   }
 }
 
+let settings: AppSettings = loadSettings(db, defaultSettings(config));
+const savedUniverse = db.getSetting('universe');
+let universe: UniverseId = isUniverseId(savedUniverse) ? savedUniverse : 'large';
+
 const feed: PriceFeed = config.feed === 'upstox' && upstox ? new UpstoxFeed(upstox) : new MockFeed();
 const realBroker = upstox ? new UpstoxBroker(upstox) : undefined;
 const paperBroker = new PaperBroker(
   (s) => store.quote(s)?.ltp,
   // Use real Upstox MIS margin for paper sizing too, whenever logged in.
   upstox && realBroker ? (s, q, p) => (upstox.hasToken ? realBroker.getMargin(s, q, p) : Promise.reject(new Error('no token'))) : undefined,
+  5,
+  () => settings.lists[universe].slippagePct,
 );
 
-const { maxDayMovePctByList, ...moneyRules } = config.money;
+const news = new NewsService();
+const { maxDayMovePctByList: _unused, ...moneyRules } = config.money;
 const trader = new AutoTrader({
   rules: moneyRules,
   db,
@@ -49,11 +58,25 @@ const trader = new AutoTrader({
   realAllowed: config.realTradingEnabled,
   patterns: PATTERNS,
   ignoreMarketHours: feed.name === 'mock',
+  newsCheck: async (symbol) => {
+    const n = await news.get(symbol);
+    return n ? shouldBlock(n) : undefined; // news down: do not stop trading
+  },
 });
 
-const savedUniverse = db.getSetting('universe');
-let universe: UniverseId = isUniverseId(savedUniverse) ? savedUniverse : 'large';
-trader.setMaxDayMovePct(maxDayMovePctByList[universe]);
+/** Push the saved settings (for the active share list) into the trader. */
+const applySettings = () => {
+  const l = settings.lists[universe];
+  trader.setRules({
+    maxDayMovePct: l.maxDayMovePct,
+    riskPerTrade: l.riskPerTrade,
+    maxOpenPositions: l.maxOpenPositions,
+    dailyLossCap: settings.dailyLossCap,
+  });
+  trader.filters.requireAboveVwap = settings.requireAboveVwap;
+  trader.filters.newsFilter = settings.newsFilter;
+};
+applySettings();
 
 const startFeed = () =>
   feed.start(UNIVERSES[universe].symbols, (quotes) => {
@@ -74,14 +97,26 @@ const universeControl = {
     feed.stop();
     store.clear();
     universe = id;
-    trader.setMaxDayMovePct(maxDayMovePctByList[id]);
+    applySettings();
     db.setSetting('universe', id);
     db.log('warn', `Share list changed to ${UNIVERSES[id].name}`);
     await startFeed();
   },
 };
 
-const app = await buildApp({ db, store, trader, feed, upstox, universe: universeControl, clientDist: resolve(here, '../../client/dist') });
+const app = await buildApp({ db, store, trader, feed, upstox, universe: universeControl,
+  settings: {
+    get: () => settings,
+    update(input: unknown) {
+      settings = validateSettings(input);
+      saveSettings(db, settings);
+      applySettings();
+      db.log('info', 'Settings saved');
+      return settings;
+    },
+  },
+  news,
+  patterns: PATTERNS, clientDist: resolve(here, '../../client/dist') });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`Stock IQ server on http://localhost:${config.port}  feed=${feed.name}  mode=${trader.mode}  real-lock=${config.realTradingEnabled ? 'OPEN' : 'LOCKED'}`);
 

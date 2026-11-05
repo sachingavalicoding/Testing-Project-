@@ -20,6 +20,10 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
 - 1-minute entry check: skips shares that already moved more than the day-move limit (3% Large, 6% Mid, 12% Small; change in `.env`); one entry per share per day.
 - **Daily loss cap** (counts open losses too) and a **KILL ALL** button. Both sell everything and stop for the day.
 - Auto square-off at `SQUARE_OFF_TIME` (15:15 IST).
+- **Settings page** in the app: per share list (Large / Mid / Small) the day-move limit, risk per trade, max open positions and paper slippage, plus daily loss cap. Saved in the database; `.env` values are only the first defaults.
+- **Picks tab**: today's ideas from the chosen list (pattern fired now, or a big mover to watch) with a Buy idea / Watch / Avoid label, the reason, and news headlines (Google News, free, no key). The auto trader uses the same checks.
+- **Safety filters** (switch on/off in Settings): buy only above today's VWAP; skip shares with bad news or results / board meeting in the last 2 days. If the news service is down, trading carries on.
+- **Honest paper results**: paper fills slip against you (buy higher, sell lower) by the per-list slippage %.
 - Daily report: every trade with *why it bought* and *why it sold*, plus charges.
 - Paper / real switch and start / stop button. After a restart trading is always **stopped**.
 - Phone-installable web app (PWA).

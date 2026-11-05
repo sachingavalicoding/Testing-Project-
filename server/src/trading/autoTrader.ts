@@ -6,6 +6,7 @@ import type { Mode, Quote } from '../types.ts';
 import { netPnl, roundTripCharges } from './charges.ts';
 import type { Pattern, Signal } from './patterns.ts';
 import { positionSize } from './sizing.ts';
+import { vwap } from './indicators.ts';
 import { initialStop, ladderStop, type LadderRule } from './stops.ts';
 
 export interface Position {
@@ -46,6 +47,8 @@ export interface AutoTraderDeps {
   /** Mock feed runs any time of day; real market hours otherwise. */
   ignoreMarketHours?: boolean;
   now?: () => number;
+  /** Returns a reason to skip this share (bad news, results due), or undefined to go ahead. */
+  newsCheck?: (symbol: string) => Promise<string | undefined>;
 }
 
 export const REAL_CONFIRM_TEXT = 'I UNDERSTAND THIS USES REAL MONEY';
@@ -88,6 +91,13 @@ export class AutoTrader {
   setMaxDayMovePct(pct: number): void {
     this.rules.maxDayMovePct = pct;
   }
+
+  /** Apply new limits from the settings page. Open positions keep their stops. */
+  setRules(r: Partial<MoneyRules>): void {
+    Object.assign(this.rules, r);
+  }
+
+  filters = { requireAboveVwap: true, newsFilter: true };
 
   setMode(mode: Mode, confirm?: string): void {
     if (mode === this.mode) return;
@@ -222,13 +232,27 @@ export class AutoTrader {
       const candles = this.d.store.candlesFor(q.symbol);
       for (const p of this.d.patterns) {
         const s = p.check(q, candles);
-        if (s) candidates.push({ q, s });
+        if (!s) continue;
+        if (this.filters.requireAboveVwap) {
+          const today = candles.filter((c) => istDate(c.t) === this.day);
+          const v = vwap(today);
+          if (v !== undefined && q.ltp < v) continue;
+        }
+        candidates.push({ q, s });
       }
     }
     candidates.sort((a, b) => b.s.score - a.s.score);
     for (const { q, s } of candidates) {
       if (this.positions.size >= this.rules.maxOpenPositions) break;
       if (this.positions.has(q.symbol)) continue;
+      if (this.filters.newsFilter && this.d.newsCheck) {
+        const skip = await this.d.newsCheck(q.symbol);
+        if (skip) {
+          this.enteredToday.add(q.symbol); // do not re-check the same share every second
+          this.d.db.log('info', `${q.symbol}: ${s.pattern} fired but skipped: ${skip}`);
+          continue;
+        }
+      }
       await this.enter(q, s);
     }
   }

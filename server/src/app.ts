@@ -12,6 +12,10 @@ import { REAL_CONFIRM_TEXT } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
 import type { UpstoxClient } from './broker/upstoxClient.ts';
 import type { Mode } from './types.ts';
+import type { AppSettings } from './settings.ts';
+import type { NewsService } from './news/news.ts';
+import { buildPicks } from './picks.ts';
+import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 
 export interface AppDeps {
@@ -21,6 +25,9 @@ export interface AppDeps {
   feed: PriceFeed;
   upstox?: UpstoxClient;
   universe: { readonly current: UniverseId; select(id: UniverseId): Promise<void> };
+  settings: { get(): AppSettings; update(input: unknown): AppSettings };
+  news?: NewsService;
+  patterns: Pattern[];
   clientDist?: string;
 }
 
@@ -80,6 +87,31 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     } catch (e) {
       return reply.code(400).send(fail((e as Error).message));
     }
+  });
+
+  app.get('/api/settings', async () => ({ settings: deps.settings.get(), active: deps.universe.current }));
+
+  app.put('/api/settings', async (req, reply) => {
+    try {
+      return { ok: true, settings: deps.settings.update(req.body) };
+    } catch (e) {
+      return reply.code(400).send(fail((e as Error).message));
+    }
+  });
+
+  app.get('/api/picks', async () => {
+    const s = deps.settings.get();
+    return buildPicks({
+      store,
+      patterns: deps.patterns,
+      news: deps.news,
+      maxDayMovePct: s.lists[deps.universe.current].maxDayMovePct,
+    });
+  });
+
+  app.get<{ Params: { symbol: string } }>('/api/news/:symbol', async (req) => {
+    const n = await deps.news?.get(req.params.symbol.toUpperCase());
+    return n ?? { symbol: req.params.symbol, score: 0, items: [], resultsSoon: false, fetchedAt: Date.now() };
   });
 
   app.get<{ Querystring: { limit?: string } }>('/api/movers', async (req) => store.movers(Number(req.query.limit ?? 10)));

@@ -12,3 +12,14 @@ export function sma(values: number[], period: number): number | undefined {
   for (let i = values.length - period; i < values.length; i++) s += values[i];
   return s / period;
 }
+
+/** Volume weighted average price of the candles (today's candles only should be passed). */
+export function vwap(candles: Array<{ h: number; l: number; c: number; v: number }>): number | undefined {
+  let pv = 0;
+  let vol = 0;
+  for (const c of candles) {
+    pv += ((c.h + c.l + c.c) / 3) * c.v;
+    vol += c.v;
+  }
+  return vol > 0 ? pv / vol : undefined;
+}
