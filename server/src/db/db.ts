@@ -1,0 +1,90 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
+export interface TradeRow {
+  id?: number;
+  day: string;
+  mode: string;
+  symbol: string;
+  qty: number;
+  entry_price: number;
+  exit_price: number;
+  entry_ts: number;
+  exit_ts: number;
+  pattern: string;
+  entry_reason: string;
+  exit_reason: string;
+  charges: number;
+  net_pnl: number;
+}
+
+export interface EventRow {
+  id?: number;
+  ts: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+/** Small SQLite store using Node's built-in sqlite (no native build, works on Termux). */
+export class Db {
+  private db: DatabaseSync;
+
+  constructor(path: string) {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    this.db = new DatabaseSync(path);
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        day TEXT NOT NULL, mode TEXT NOT NULL, symbol TEXT NOT NULL, qty INTEGER NOT NULL,
+        entry_price REAL NOT NULL, exit_price REAL NOT NULL, entry_ts INTEGER NOT NULL, exit_ts INTEGER NOT NULL,
+        pattern TEXT NOT NULL, entry_reason TEXT NOT NULL, exit_reason TEXT NOT NULL,
+        charges REAL NOT NULL, net_pnl REAL NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS trades_day ON trades(day);
+      CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL
+      );
+    `);
+  }
+
+  getSetting(key: string): string | undefined {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+
+  addTrade(t: TradeRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO trades (day, mode, symbol, qty, entry_price, exit_price, entry_ts, exit_ts, pattern, entry_reason, exit_reason, charges, net_pnl)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(t.day, t.mode, t.symbol, t.qty, t.entry_price, t.exit_price, t.entry_ts, t.exit_ts, t.pattern, t.entry_reason, t.exit_reason, t.charges, t.net_pnl);
+  }
+
+  tradesForDay(day: string): TradeRow[] {
+    return this.db.prepare('SELECT * FROM trades WHERE day = ? ORDER BY exit_ts DESC').all(day) as unknown as TradeRow[];
+  }
+
+  recentTrades(limit = 100): TradeRow[] {
+    return this.db.prepare('SELECT * FROM trades ORDER BY exit_ts DESC LIMIT ?').all(limit) as unknown as TradeRow[];
+  }
+
+  log(level: EventRow['level'], message: string): void {
+    this.db.prepare('INSERT INTO events (ts, level, message) VALUES (?, ?, ?)').run(Date.now(), level, message);
+  }
+
+  recentEvents(limit = 100): EventRow[] {
+    return this.db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT ?').all(limit) as unknown as EventRow[];
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}

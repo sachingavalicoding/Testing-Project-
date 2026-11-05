@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+body { font-family: ui-sans-serif, system-ui, sans-serif; }
+.num { font-variant-numeric: tabular-nums; }
