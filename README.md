@@ -6,7 +6,8 @@ Small, fast app for **intraday shares (Nifty 100)** with **Upstox**. It watches 
 This is **step 1** of the plan (base app + paper trading). Built from the project handoff notes.
 
 ## What works now
-- Live prices for all Nifty 100 shares, updated every second (one Upstox quote call for all 100).
+- Pick the share list in the app: **Large (Nifty 100), Mid (Midcap 100) or Small (Smallcap 100)**. Always one list of 100 at a time, saved across restarts. Switching needs no open positions and stops auto trading. Mid and small caps swing more, so start with paper.
+- Live prices for the chosen 100 shares, updated every second (one Upstox quote call for all 100).
 - Top gainers / losers table.
 - Candle chart (1 minute and daily) for any share.
 - Auto trader (paper): two patterns to start
@@ -54,7 +55,7 @@ Covers charges, position size, stops/ladder, auto trader (entries, exits, loss c
 - `server/src/broker/` Upstox client (paced, retries 429), Upstox broker, paper broker. Same interface, so paper and real use the same code.
 - `server/src/market/` price feeds (Upstox / mock), live price + candle store, India time helpers.
 - `server/src/trading/` charges, sizing, stops/ladder, patterns, auto trader.
-- `server/src/universe/nifty100.ts` the 100 shares. **Check it after each NSE reshuffle (March/September).**
+- `server/src/universe/` the three lists of 100 shares. **Mid and small lists are best-effort: check them against NSE (niftyindices.com) and after each reshuffle (March/September).** Symbols Upstox does not know are skipped and shown in the app.
 - `client/` React + Vite + Tailwind web app.
 
 ## Next steps (from the plan)

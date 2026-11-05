@@ -12,6 +12,7 @@ import { REAL_CONFIRM_TEXT } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
 import type { UpstoxClient } from './broker/upstoxClient.ts';
 import type { Mode } from './types.ts';
+import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 
 export interface AppDeps {
   db: Db;
@@ -19,6 +20,7 @@ export interface AppDeps {
   trader: AutoTrader;
   feed: PriceFeed;
   upstox?: UpstoxClient;
+  universe: { readonly current: UniverseId; select(id: UniverseId): Promise<void> };
   clientDist?: string;
 }
 
@@ -63,6 +65,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.post('/api/kill-all', async () => {
     await trader.killAll('Kill-all pressed');
     return { ok: true };
+  });
+
+  app.get('/api/universe', async () => ({
+    current: deps.universe.current,
+    options: Object.values(UNIVERSES).map((u) => ({ id: u.id, name: u.name, count: u.symbols.length, warning: u.warning })),
+  }));
+
+  app.post<{ Body: { id: string } }>('/api/universe', async (req, reply) => {
+    if (!isUniverseId(req.body?.id)) return reply.code(400).send(fail('id must be large, mid or small'));
+    try {
+      await deps.universe.select(req.body.id);
+      return { ok: true, current: deps.universe.current };
+    } catch (e) {
+      return reply.code(400).send(fail((e as Error).message));
+    }
   });
 
   app.get<{ Querystring: { limit?: string } }>('/api/movers', async (req) => store.movers(Number(req.query.limit ?? 10)));

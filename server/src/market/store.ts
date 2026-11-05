@@ -18,6 +18,13 @@ export class MarketStore {
 
   constructor(private readonly maxCandles = 400) {}
 
+  /** Forget everything (used when the share list changes). */
+  clear(): void {
+    this.quotes.clear();
+    this.candles.clear();
+    this.lastVolume.clear();
+  }
+
   update(quotes: Quote[]): void {
     for (const q of quotes) {
       this.quotes.set(q.symbol, q);

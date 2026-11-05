@@ -36,6 +36,8 @@ export class MockFeed implements PriceFeed {
   }
 
   async start(symbols: readonly string[], onQuotes: (q: Quote[]) => void): Promise<void> {
+    this.stop();
+    this.state.clear();
     const now = Date.now();
     for (const symbol of symbols) {
       const prevClose = this.basePrice(symbol);

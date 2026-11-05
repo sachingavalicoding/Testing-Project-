@@ -13,7 +13,7 @@ import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
 import { AutoTrader } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
-import { NIFTY_100 } from './universe/nifty100.ts';
+import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const config = loadConfig();
@@ -50,12 +50,35 @@ const trader = new AutoTrader({
   ignoreMarketHours: feed.name === 'mock',
 });
 
-await feed.start(NIFTY_100, (quotes) => {
-  store.update(quotes);
-  void trader.onQuotes(quotes);
-});
+const savedUniverse = db.getSetting('universe');
+let universe: UniverseId = isUniverseId(savedUniverse) ? savedUniverse : 'large';
 
-const app = await buildApp({ db, store, trader, feed, upstox, clientDist: resolve(here, '../../client/dist') });
+const startFeed = () =>
+  feed.start(UNIVERSES[universe].symbols, (quotes) => {
+    store.update(quotes);
+    void trader.onQuotes(quotes);
+  });
+await startFeed();
+
+/** Switch which 100 shares are watched and traded. Only one list is active at a time. */
+const universeControl = {
+  get current(): UniverseId {
+    return universe;
+  },
+  async select(id: UniverseId): Promise<void> {
+    if (id === universe) return;
+    if (trader.positions.size > 0) throw new Error('Close all open positions before changing the share list');
+    trader.stop();
+    feed.stop();
+    store.clear();
+    universe = id;
+    db.setSetting('universe', id);
+    db.log('warn', `Share list changed to ${UNIVERSES[id].name}`);
+    await startFeed();
+  },
+};
+
+const app = await buildApp({ db, store, trader, feed, upstox, universe: universeControl, clientDist: resolve(here, '../../client/dist') });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`Stock IQ server on http://localhost:${config.port}  feed=${feed.name}  mode=${trader.mode}  real-lock=${config.realTradingEnabled ? 'OPEN' : 'LOCKED'}`);
 

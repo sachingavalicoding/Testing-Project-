@@ -74,6 +74,32 @@ export default function App() {
   );
 }
 
+interface UniverseInfo { current: string; options: { id: string; name: string; count: number; warning?: string }[] }
+
+function UniversePicker({ act, locked }: { act: (fn: () => Promise<unknown>) => void; locked: boolean }) {
+  const [u, setU] = useState<UniverseInfo>();
+  const load = () => get<UniverseInfo>('/api/universe').then(setU).catch(() => undefined);
+  useEffect(() => { void load(); }, []);
+  if (!u) return null;
+  const warning = u.options.find((o) => o.id === u.current)?.warning;
+  return (
+    <section className="rounded-lg bg-slate-900 p-3">
+      <div className="mb-2 font-semibold">Share list (100 shares at a time)</div>
+      <div className="grid grid-cols-3 gap-2">
+        {u.options.map((o) => (
+          <button key={o.id} disabled={locked}
+            onClick={() => act(async () => { await post('/api/universe', { id: o.id }); await load(); })}
+            className={`rounded py-2 text-sm disabled:opacity-40 ${u.current === o.id ? 'bg-sky-700 font-bold' : 'bg-slate-800'}`}>
+            {o.id === 'large' ? 'Large' : o.id === 'mid' ? 'Mid' : 'Small'}
+          </button>
+        ))}
+      </div>
+      {locked && <p className="mt-2 text-xs text-slate-400">Close open positions to change the list.</p>}
+      {warning && <p className="mt-2 text-xs text-amber-400">{warning}</p>}
+    </section>
+  );
+}
+
 function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn: () => Promise<unknown>) => void; openChart: (s: string) => void }) {
   const total = s.realizedToday + s.unrealized;
   const switchMode = () => {
@@ -121,6 +147,8 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
           <a href="/api/auth/upstox/login" className="mt-3 block rounded bg-violet-700 py-2 text-center text-sm">Login to Upstox</a>
         )}
       </section>
+
+      <UniversePicker act={act} locked={s.positions.length > 0} />
 
       <section className="rounded-lg bg-slate-900 p-3">
         <h2 className="mb-2 font-semibold">Open positions ({s.positions.length}/{s.rules.maxOpenPositions})</h2>

@@ -3,15 +3,28 @@ import { MarketStore } from '../src/market/store.ts';
 import { MockFeed } from '../src/market/mockFeed.ts';
 import { UpstoxClient } from '../src/broker/upstoxClient.ts';
 import { UpstoxBroker } from '../src/broker/upstoxBroker.ts';
-import { NIFTY_100 } from '../src/universe/nifty100.ts';
+import { UNIVERSES } from '../src/universe/index.ts';
 
 describe('universe', () => {
-  it('has 100 unique symbols', () => {
-    expect(new Set(NIFTY_100).size).toBe(100);
+  it('each list has 100 unique symbols', () => {
+    for (const u of Object.values(UNIVERSES)) expect(new Set(u.symbols).size, u.id).toBe(100);
+  });
+
+  it('lists do not overlap', () => {
+    const all = Object.values(UNIVERSES).flatMap((u) => [...u.symbols]);
+    expect(new Set(all).size).toBe(300);
   });
 });
 
 describe('MarketStore', () => {
+  it('clear() forgets old shares', () => {
+    const s = new MarketStore();
+    s.update([{ symbol: 'A', ltp: 1, prevClose: 1, open: 1, high: 1, low: 1, volume: 0, ts: 0 }]);
+    s.clear();
+    expect(s.allQuotes()).toHaveLength(0);
+    expect(s.candlesFor('A')).toHaveLength(0);
+  });
+
   it('ranks gainers and losers', () => {
     const s = new MarketStore();
     const q = (symbol: string, ltp: number) => ({ symbol, ltp, prevClose: 100, open: 100, high: ltp, low: ltp, volume: 0, ts: 0 });
