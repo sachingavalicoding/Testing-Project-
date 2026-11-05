@@ -69,6 +69,13 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.size).toBe(0);
   });
 
+  it('takes a bigger mover once the day-move limit is raised (small-cap list)', async () => {
+    trader.setMaxDayMovePct(12);
+    trader.start();
+    await push(quote('GOMOVER', 1080, 1000)); // +8%
+    expect(trader.positions.has('GOMOVER')).toBe(true);
+  });
+
   it('respects max open positions', async () => {
     trader.start();
     await push(quote('GOA', 1000), quote('GOB', 1000), quote('GOC', 1000));

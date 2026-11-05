@@ -79,7 +79,41 @@ export const emaCross: Pattern = {
   },
 };
 
-export const PATTERNS: Pattern[] = [openingRangeBreakout, emaCross];
+/**
+ * Momentum breakout for shares already running (built for mid/small caps that move 5-10% in a day).
+ * Buys when the share is up 2%+ on the day, a 1-minute candle closes above the previous 20 candles' high
+ * (a fresh break, not one already running) and volume is at least 2x the recent average.
+ */
+export const momentumBreakout: Pattern = {
+  id: 'mom',
+  name: 'Momentum breakout (up 2%+, volume surge)',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 30 || mins > 14 * 60 + 30) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct < 2) return undefined;
+    const done = closed(all, q.ts);
+    if (done.length < 25) return undefined;
+    const last = done[done.length - 1];
+    const before = done[done.length - 2];
+    const prior = done.slice(-21, -1);
+    const priorHigh = Math.max(...prior.map((c) => c.h));
+    const priorLow = Math.min(...prior.map((c) => c.l));
+    if (last.c <= priorHigh || before.c > priorHigh) return undefined;
+    const avgVol = sma(prior.map((c) => c.v), prior.length) ?? 0;
+    if (avgVol > 0 && last.v < avgVol * 2) return undefined;
+    const rangePct = (priorHigh - priorLow) / priorHigh;
+    return {
+      pattern: this.id,
+      reason: `Up ${dayPct.toFixed(1)}% today, 1-min close ${last.c} broke the 20-candle high ${priorHigh.toFixed(2)} on volume ${Math.round(last.v)} vs avg ${Math.round(avgVol)}`,
+      stopPct: clamp(rangePct / 2, 0.01, 0.03),
+      score: 55 + Math.min(35, Math.round(dayPct * 3)),
+    };
+  },
+};
+
+export const PATTERNS: Pattern[] = [openingRangeBreakout, emaCross, momentumBreakout];
 
 function sameDay(a: number, b: number): boolean {
   const off = 5.5 * 3600_000;

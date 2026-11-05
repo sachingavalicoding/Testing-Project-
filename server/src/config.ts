@@ -31,6 +31,8 @@ export interface Config {
     maxOpenPositions: number;
     riskPerTrade: number;
     maxDayMovePct: number;
+    /** Skip limit per share list: small caps often move 10% in a day, large caps rarely do. */
+    maxDayMovePctByList: { large: number; mid: number; small: number };
     squareOffTime: string; // "HH:MM" IST
   };
   /** Hard lock. When false the server refuses to place any real order. */
@@ -56,6 +58,11 @@ export function loadConfig(): Config {
       maxOpenPositions: num('MAX_OPEN_POSITIONS', 3),
       riskPerTrade: num('RISK_PER_TRADE', 200),
       maxDayMovePct: num('MAX_DAY_MOVE_PCT', 3),
+      maxDayMovePctByList: {
+        large: num('MAX_DAY_MOVE_PCT', 3),
+        mid: num('MAX_DAY_MOVE_PCT_MID', 6),
+        small: num('MAX_DAY_MOVE_PCT_SMALL', 12),
+      },
       squareOffTime: str('SQUARE_OFF_TIME', '15:15'),
     },
     realTradingEnabled: str('REAL_TRADING_ENABLED', 'false').toLowerCase() === 'true',

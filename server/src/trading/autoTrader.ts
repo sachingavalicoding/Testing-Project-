@@ -60,9 +60,12 @@ export class AutoTrader {
   private day: string;
   private busy = false;
   private readonly now: () => number;
+  /** Own copy so the day-move limit can change with the share list. */
+  private readonly rules: MoneyRules;
 
   constructor(private readonly d: AutoTraderDeps) {
     this.now = d.now ?? Date.now;
+    this.rules = { ...d.rules };
     this.day = istDate(this.now());
     // Mode is remembered, but trading never auto-starts after a restart.
     const saved = d.db.getSetting('mode');
@@ -79,6 +82,11 @@ export class AutoTrader {
       return this.d.realBroker;
     }
     return this.d.paperBroker;
+  }
+
+  /** Bigger limit for volatile lists (mid/small cap). */
+  setMaxDayMovePct(pct: number): void {
+    this.rules.maxDayMovePct = pct;
   }
 
   setMode(mode: Mode, confirm?: string): void {
@@ -117,7 +125,7 @@ export class AutoTrader {
   get freeCash(): number {
     let used = 0;
     for (const p of this.positions.values()) used += p.marginUsed;
-    return this.d.rules.capital + Math.min(0, this.realizedToday) - used;
+    return this.rules.capital + Math.min(0, this.realizedToday) - used;
   }
 
   unrealized(): number {
@@ -138,7 +146,7 @@ export class AutoTrader {
       realizedToday: Math.round(this.realizedToday * 100) / 100,
       unrealized: this.unrealized(),
       freeCash: Math.round(this.freeCash),
-      rules: this.d.rules,
+      rules: this.rules,
       positions: [...this.positions.values()].map((p) => ({
         ...p,
         ltp: this.d.store.quote(p.symbol)?.ltp ?? p.entry,
@@ -174,13 +182,13 @@ export class AutoTrader {
   private inTradingWindow(): boolean {
     if (this.d.ignoreMarketHours) return true;
     const m = istMinutes(this.now());
-    return m >= MARKET_OPEN && m < parseHHMM(this.d.rules.squareOffTime);
+    return m >= MARKET_OPEN && m < parseHHMM(this.rules.squareOffTime);
   }
 
   private async manageOpen(quotes: Quote[]): Promise<void> {
     const byS = new Map(quotes.map((q) => [q.symbol, q]));
-    if (!this.d.ignoreMarketHours && this.positions.size > 0 && istMinutes(this.now()) >= parseHHMM(this.d.rules.squareOffTime)) {
-      for (const p of [...this.positions.values()]) await this.exit(p, `Square-off time ${this.d.rules.squareOffTime}`);
+    if (!this.d.ignoreMarketHours && this.positions.size > 0 && istMinutes(this.now()) >= parseHHMM(this.rules.squareOffTime)) {
+      for (const p of [...this.positions.values()]) await this.exit(p, `Square-off time ${this.rules.squareOffTime}`);
       return;
     }
     for (const p of [...this.positions.values()]) {
@@ -197,20 +205,20 @@ export class AutoTrader {
       if (q.ltp <= p.stop) await this.exit(p, `Stop hit at ${q.ltp} (stop ${p.stop})`);
     }
     // Daily loss cap counts open losses too.
-    if (!this.haltedReason && this.realizedToday + this.unrealized() <= -this.d.rules.dailyLossCap) {
-      await this.killAll(`Daily loss cap ₹${this.d.rules.dailyLossCap} reached`);
+    if (!this.haltedReason && this.realizedToday + this.unrealized() <= -this.rules.dailyLossCap) {
+      await this.killAll(`Daily loss cap ₹${this.rules.dailyLossCap} reached`);
     }
   }
 
   private async lookForEntries(quotes: Quote[]): Promise<void> {
     if (!this.inTradingWindow()) return;
-    if (this.positions.size >= this.d.rules.maxOpenPositions) return;
+    if (this.positions.size >= this.rules.maxOpenPositions) return;
     const candidates: Array<{ q: Quote; s: Signal }> = [];
     for (const q of quotes) {
       if (this.positions.has(q.symbol) || this.enteredToday.has(q.symbol)) continue;
       // 1-minute entry check: skip shares that already moved too much today.
       const dayMove = q.prevClose > 0 ? Math.abs((q.ltp - q.prevClose) / q.prevClose) * 100 : 0;
-      if (dayMove > this.d.rules.maxDayMovePct) continue;
+      if (dayMove > this.rules.maxDayMovePct) continue;
       const candles = this.d.store.candlesFor(q.symbol);
       for (const p of this.d.patterns) {
         const s = p.check(q, candles);
@@ -219,7 +227,7 @@ export class AutoTrader {
     }
     candidates.sort((a, b) => b.s.score - a.s.score);
     for (const { q, s } of candidates) {
-      if (this.positions.size >= this.d.rules.maxOpenPositions) break;
+      if (this.positions.size >= this.rules.maxOpenPositions) break;
       if (this.positions.has(q.symbol)) continue;
       await this.enter(q, s);
     }
@@ -233,14 +241,14 @@ export class AutoTrader {
       price: q.ltp,
       freeCash: this.freeCash,
       marginPerShare: probe.marginPerShare,
-      riskPerTrade: this.d.rules.riskPerTrade,
+      riskPerTrade: this.rules.riskPerTrade,
       stopPct: s.stopPct,
     });
     if (qty < 1) {
       this.d.db.log('info', `${q.symbol}: ${s.pattern} fired but size is 0 (free cash ₹${Math.round(this.freeCash)})`);
       return;
     }
-    const stop = initialStop(q.ltp, qty, s.stopPct, this.d.rules.riskPerTrade);
+    const stop = initialStop(q.ltp, qty, s.stopPct, this.rules.riskPerTrade);
     const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: s.reason });
     if (res.status === 'rejected') {
       this.d.db.log('warn', `${q.symbol} BUY rejected: ${res.message ?? 'unknown'}`);

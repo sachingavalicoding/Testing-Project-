@@ -39,8 +39,9 @@ const paperBroker = new PaperBroker(
   upstox && realBroker ? (s, q, p) => (upstox.hasToken ? realBroker.getMargin(s, q, p) : Promise.reject(new Error('no token'))) : undefined,
 );
 
+const { maxDayMovePctByList, ...moneyRules } = config.money;
 const trader = new AutoTrader({
-  rules: config.money,
+  rules: moneyRules,
   db,
   store,
   paperBroker,
@@ -52,6 +53,7 @@ const trader = new AutoTrader({
 
 const savedUniverse = db.getSetting('universe');
 let universe: UniverseId = isUniverseId(savedUniverse) ? savedUniverse : 'large';
+trader.setMaxDayMovePct(maxDayMovePctByList[universe]);
 
 const startFeed = () =>
   feed.start(UNIVERSES[universe].symbols, (quotes) => {
@@ -72,6 +74,7 @@ const universeControl = {
     feed.stop();
     store.clear();
     universe = id;
+    trader.setMaxDayMovePct(maxDayMovePctByList[id]);
     db.setSetting('universe', id);
     db.log('warn', `Share list changed to ${UNIVERSES[id].name}`);
     await startFeed();
