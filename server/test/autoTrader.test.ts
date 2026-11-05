@@ -1,0 +1,168 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { PaperBroker } from '../src/broker/paperBroker.ts';
+import type { Broker } from '../src/broker/broker.ts';
+import { Db } from '../src/db/db.ts';
+import { MarketStore } from '../src/market/store.ts';
+import { AutoTrader, REAL_CONFIRM_TEXT } from '../src/trading/autoTrader.ts';
+import type { Pattern } from '../src/trading/patterns.ts';
+import type { Quote } from '../src/types.ts';
+
+const rules = {
+  capital: 30000,
+  dailyLossCap: 500,
+  maxOpenPositions: 2,
+  riskPerTrade: 200,
+  maxDayMovePct: 3,
+  squareOffTime: '15:15',
+};
+
+// Fires for any symbol whose name starts with "GO".
+const alwaysGo: Pattern = {
+  id: 'test',
+  name: 'test',
+  check: (q) => (q.symbol.startsWith('GO') ? { pattern: 'test', reason: 'test signal', stopPct: 0.01, score: 50 } : undefined),
+};
+
+function quote(symbol: string, ltp: number, prevClose = 1000): Quote {
+  return { symbol, ltp, prevClose, open: prevClose, high: ltp, low: ltp, volume: 0, ts: Date.now() };
+}
+
+describe('AutoTrader (paper)', () => {
+  let db: Db;
+  let store: MarketStore;
+  let trader: AutoTrader;
+
+  const push = async (...qs: Quote[]) => {
+    store.update(qs);
+    await trader.onQuotes(qs);
+  };
+
+  beforeEach(() => {
+    db = new Db(':memory:');
+    store = new MarketStore();
+    const paper = new PaperBroker((s) => store.quote(s)?.ltp, undefined, 5);
+    trader = new AutoTrader({ rules, db, store, paperBroker: paper, realAllowed: false, patterns: [alwaysGo], ignoreMarketHours: true });
+  });
+
+  it('starts in paper mode and stopped', () => {
+    expect(trader.mode).toBe('paper');
+    expect(trader.running).toBe(false);
+  });
+
+  it('does nothing while stopped', async () => {
+    await push(quote('GOOD', 1000));
+    expect(trader.positions.size).toBe(0);
+  });
+
+  it('buys on a signal, sized by risk, with a capped stop', async () => {
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const p = trader.positions.get('GOOD')!;
+    expect(p.qty).toBe(20);
+    expect(p.stop).toBeLessThan(1000);
+    expect(p.stop).toBeGreaterThanOrEqual(990);
+  });
+
+  it('skips shares that already moved too much today', async () => {
+    trader.start();
+    await push(quote('GOFAST', 1050, 1000)); // +5%
+    expect(trader.positions.size).toBe(0);
+  });
+
+  it('respects max open positions', async () => {
+    trader.start();
+    await push(quote('GOA', 1000), quote('GOB', 1000), quote('GOC', 1000));
+    expect(trader.positions.size).toBe(2);
+  });
+
+  it('sells when the stop is hit and records the trade with reasons', async () => {
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const stop = trader.positions.get('GOOD')!.stop;
+    await push(quote('GOOD', stop));
+    expect(trader.positions.size).toBe(0);
+    const [t] = db.recentTrades();
+    expect(t.symbol).toBe('GOOD');
+    expect(t.entry_reason).toBe('test signal');
+    expect(t.exit_reason).toMatch(/Stop hit/);
+    expect(t.net_pnl).toBeLessThan(0);
+    // Exit at the stop: loss incl. charges stays within the per-trade risk.
+    expect(t.net_pnl).toBeGreaterThanOrEqual(-rules.riskPerTrade);
+  });
+
+  it('does not re-enter the same share the same day', async () => {
+    trader.start();
+    await push(quote('GOOD', 1000));
+    await push(quote('GOOD', 985));
+    await push(quote('GOOD', 1000));
+    expect(trader.positions.size).toBe(0);
+  });
+
+  it('moves the stop up the ladder as price rises', async () => {
+    trader.start();
+    await push(quote('GOOD', 1000));
+    await push(quote('GOOD', 1015));
+    expect(trader.positions.get('GOOD')!.stop).toBe(1010);
+  });
+
+  it('kill-all sells everything and blocks restart for the day', async () => {
+    trader.start();
+    await push(quote('GOA', 1000), quote('GOB', 1000));
+    await trader.killAll();
+    expect(trader.positions.size).toBe(0);
+    expect(trader.running).toBe(false);
+    expect(() => trader.start()).toThrow(/Stopped for today/);
+  });
+
+  it('daily loss cap stops trading', async () => {
+    trader = new AutoTrader({
+      rules: { ...rules, dailyLossCap: 100 },
+      db,
+      store,
+      paperBroker: new PaperBroker((s) => store.quote(s)?.ltp, undefined, 5),
+      realAllowed: false,
+      patterns: [alwaysGo],
+      ignoreMarketHours: true,
+    });
+    trader.start();
+    await push(quote('GOOD', 1000));
+    await push(quote('GOOD', 994)); // ~₹120+ open loss, above stop
+    expect(trader.haltedReason).toMatch(/Daily loss cap/);
+    expect(trader.positions.size).toBe(0);
+  });
+});
+
+describe('real money lock', () => {
+  const fakeReal: Broker = {
+    name: 'fake-upstox',
+    placeOrder: async () => {
+      throw new Error('must not be called');
+    },
+    getMargin: async (symbol, _q, price) => ({ symbol, leverage: 5, marginPerShare: price / 5 }),
+  };
+
+  it('refuses real mode when REAL_TRADING_ENABLED is false', () => {
+    const db = new Db(':memory:');
+    const store = new MarketStore();
+    const t = new AutoTrader({ rules, db, store, paperBroker: new PaperBroker(() => 1), realBroker: fakeReal, realAllowed: false, patterns: [] });
+    expect(() => t.setMode('real', REAL_CONFIRM_TEXT)).toThrow(/locked/);
+    expect(t.mode).toBe('paper');
+  });
+
+  it('needs the exact confirm text even when unlocked', () => {
+    const db = new Db(':memory:');
+    const store = new MarketStore();
+    const t = new AutoTrader({ rules, db, store, paperBroker: new PaperBroker(() => 1), realBroker: fakeReal, realAllowed: true, patterns: [] });
+    expect(() => t.setMode('real', 'yes')).toThrow(/Type exactly/);
+    t.setMode('real', REAL_CONFIRM_TEXT);
+    expect(t.mode).toBe('real');
+    expect(t.running).toBe(false);
+  });
+
+  it('does not come back in real mode after restart if the lock is closed', () => {
+    const db = new Db(':memory:');
+    db.setSetting('mode', 'real');
+    const t = new AutoTrader({ rules, db, store: new MarketStore(), paperBroker: new PaperBroker(() => 1), realBroker: fakeReal, realAllowed: false, patterns: [] });
+    expect(t.mode).toBe('paper');
+  });
+});
