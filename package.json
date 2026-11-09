@@ -1,0 +1,16 @@
+{
+  "name": "stock-iq",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Small, fast intraday/swing shares app for Nifty 100 with Upstox, paper trading by default.",
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "test": "npm test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "engines": { "node": ">=22.13" }
+}
