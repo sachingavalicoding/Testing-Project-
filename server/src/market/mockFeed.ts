@@ -1,5 +1,6 @@
 import type { Candle, Quote } from '../types.ts';
 import type { PriceFeed } from './feed.ts';
+import { UNIVERSES } from '../universe/index.ts';
 
 /** Small deterministic random generator so the same symbol always starts at the same price. */
 function seeded(seed: number) {
@@ -27,6 +28,8 @@ export class MockFeed implements PriceFeed {
   private timer: NodeJS.Timeout | undefined;
   private state = new Map<string, Quote>();
   private rand = seeded(Date.now());
+  private onQuotes: ((q: Quote[]) => void) | undefined;
+  private readonly known = new Set(Object.values(UNIVERSES).flatMap((u) => [...u.symbols]));
 
   constructor(private readonly intervalMs = 1000) {}
 
@@ -38,6 +41,7 @@ export class MockFeed implements PriceFeed {
   async start(symbols: readonly string[], onQuotes: (q: Quote[]) => void): Promise<void> {
     this.stop();
     this.state.clear();
+    this.onQuotes = onQuotes;
     const now = Date.now();
     for (const symbol of symbols) {
       const prevClose = this.basePrice(symbol);
@@ -67,6 +71,24 @@ export class MockFeed implements PriceFeed {
     return out;
   }
 
+  search(query: string, limit = 15): string[] {
+    const q = query.trim().toUpperCase();
+    if (!q) return [];
+    const all = [...this.known];
+    return [...all.filter((s) => s.startsWith(q)), ...all.filter((s) => !s.startsWith(q) && s.includes(q))].slice(0, limit);
+  }
+
+  async watch(symbol: string): Promise<boolean> {
+    if (!this.known.has(symbol)) return false;
+    if (!this.state.has(symbol)) {
+      const prevClose = this.basePrice(symbol);
+      const q: Quote = { symbol, ltp: prevClose, prevClose, open: prevClose, high: prevClose, low: prevClose, volume: 0, ts: Date.now() };
+      this.state.set(symbol, q);
+      this.onQuotes?.([q]);
+    }
+    return true;
+  }
+
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
@@ -87,6 +109,13 @@ export class MockFeed implements PriceFeed {
       const l = round(Math.min(o, c) * (1 - r() * vol * 0.3));
       candles.push({ t: end - i * step, o, h, l, c, v: Math.floor(r() * 100_000) });
       price = c;
+    }
+    // Make the fake history end at today's live price so the chart has no jump.
+    const live = this.state.get(symbol)?.ltp;
+    const lastClose = candles[candles.length - 1]?.c;
+    if (live && lastClose) {
+      const k = live / lastClose;
+      for (const c of candles) { c.o = round(c.o * k); c.h = round(c.h * k); c.l = round(c.l * k); c.c = round(c.c * k); }
     }
     return candles;
   }

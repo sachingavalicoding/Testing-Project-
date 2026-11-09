@@ -6,6 +6,8 @@ Small, fast app for **intraday shares (Nifty 100)** with **Upstox**. It watches 
 This is **step 1** of the plan (base app + paper trading). Built from the project handoff notes.
 
 ## What works now
+- **Trade screen (TradingView style)**: watchlist of the chosen list (sort A–Z / gainers / losers) with a search box for **any** share, a candle chart (1m, 5m, 15m, 1h, Daily) with EMA 9, EMA 21, VWAP and volume you can switch on and off, your buy / stop / target lines on the chart, an order ticket, and Positions / Waiting orders / Today / Log tabs. Works on phone and laptop.
+- **Manual buy and sell of any share** next to auto trading: market or limit buy, stop-loss (default 1%), optional target, one tap Sell. Paper by default; real orders only after the real-money lock is opened. Manual trades obey the same free-cash check, daily loss cap, kill-all and 15:15 square-off. Shares only, no short selling.
 - Pick the share list in the app: **Large (Nifty 100), Mid (Midcap 100) or Small (Smallcap 100)**. Always one list of 100 at a time, saved across restarts. Switching needs no open positions and stops auto trading. Mid and small caps swing more, so start with paper.
 - Live prices for the chosen 100 shares, updated every second (one Upstox quote call for all 100).
 - Top gainers / losers table.

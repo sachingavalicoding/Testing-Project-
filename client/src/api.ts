@@ -1,8 +1,10 @@
 export interface Mover { symbol: string; ltp: number; changePct: number; volume: number }
 export interface Position {
   symbol: string; mode: string; qty: number; entry: number; stop: number; highest: number;
-  pattern: string; reason: string; ltp: number; pnl: number; estimated: boolean;
+  pattern: string; reason: string; ltp: number; pnl: number; estimated: boolean; target?: number;
 }
+export interface PendingOrder { id: string; symbol: string; qty: number; limitPrice: number; stopPrice?: number; stopPct?: number; targetPrice?: number; mode: string }
+export interface Quote { symbol: string; ltp: number; prevClose: number; open: number; high: number; low: number; volume: number; ts: number }
 export interface Status {
   mode: 'paper' | 'real';
   running: boolean;
@@ -12,6 +14,7 @@ export interface Status {
   unrealized: number;
   freeCash: number;
   positions: Position[];
+  pending?: PendingOrder[];
   rules: { capital: number; dailyLossCap: number; maxOpenPositions: number; riskPerTrade: number; maxDayMovePct: number; squareOffTime: string };
   feed?: string;
   feedError?: string;
@@ -57,4 +60,11 @@ export interface Pick {
   signals: { pattern: string; reason: string; score: number; stopPct: number }[];
   news?: { score: number; resultsSoon: boolean; headlines: { title: string; source: string; link: string; ts: number }[] };
   verdict: 'buy' | 'watch' | 'avoid'; why: string; score: number;
+}
+
+export async function del<T>(path: string): Promise<T> {
+  const r = await fetch(path, { method: 'DELETE' });
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(json.error ?? r.statusText);
+  return json as T;
 }

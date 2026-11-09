@@ -84,6 +84,19 @@ export class UpstoxClient {
     return key;
   }
 
+  /** Symbols starting with, then containing, the text. */
+  searchSymbols(query: string, limit = 15): string[] {
+    const q = query.trim().toUpperCase();
+    if (!q) return [];
+    const starts: string[] = [];
+    const contains: string[] = [];
+    for (const s of this.symbolToKey.keys()) {
+      if (s.startsWith(q)) starts.push(s);
+      else if (s.includes(q)) contains.push(s);
+    }
+    return [...starts.sort((a, b) => a.length - b.length), ...contains].slice(0, limit);
+  }
+
   hasKey(symbol: string): boolean {
     return this.symbolToKey.has(symbol);
   }

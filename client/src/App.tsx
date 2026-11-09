@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import Chart from './Chart.tsx';
+import Terminal from './Terminal.tsx';
 import Picks from './Picks.tsx';
 import Settings from './Settings.tsx';
 import { get, post, rupee, type EventRow, type Mover, type Status, type Trade } from './api.ts';
 
-type Tab = 'home' | 'picks' | 'movers' | 'chart' | 'trades' | 'settings';
+type Tab = 'trade' | 'auto' | 'picks' | 'movers' | 'report' | 'settings';
 
 interface Live { status: Status; movers: { gainers: Mover[]; losers: Mover[] } }
 
@@ -24,7 +24,7 @@ const pnlColor = (n: number) => (n > 0 ? 'text-green-400' : n < 0 ? 'text-red-40
 
 export default function App() {
   const { live, connected } = useLive();
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTab] = useState<Tab>('trade');
   const [symbol, setSymbol] = useState('RELIANCE');
   const [meta, setMeta] = useState<Status>();
   const [msg, setMsg] = useState<string>();
@@ -41,10 +41,10 @@ export default function App() {
   };
 
   const s = live?.status;
-  const openChart = (sym: string) => { setSymbol(sym); setTab('chart'); };
+  const openChart = (sym: string) => { setSymbol(sym); setTab('trade'); };
 
   return (
-    <div className="mx-auto max-w-3xl p-3 pb-20">
+    <div className={`mx-auto p-2 pb-20 ${tab === 'trade' ? 'max-w-[1700px]' : 'max-w-3xl'}`}>
       <header className="mb-3 flex items-center justify-between">
         <h1 className="text-xl font-bold">Stock IQ</h1>
         <div className="flex items-center gap-2 text-xs">
@@ -59,11 +59,11 @@ export default function App() {
       {msg && <div className="mb-3 rounded bg-red-900/60 p-2 text-sm">{msg}</div>}
       {meta?.feedError && <div className="mb-3 rounded bg-amber-900/50 p-2 text-xs">Feed: {meta.feedError}</div>}
 
-      {tab === 'home' && s && <Home s={s} meta={meta} act={act} openChart={openChart} />}
+      {tab === 'trade' && <Terminal symbol={symbol} setSymbol={setSymbol} status={s} />}
+      {tab === 'auto' && s && <Home s={s} meta={meta} act={act} openChart={openChart} />}
       {tab === 'picks' && <Picks onPick={openChart} />}
       {tab === 'movers' && live && <Movers movers={live.movers} onPick={openChart} />}
-      {tab === 'chart' && <ChartTab symbol={symbol} setSymbol={setSymbol} />}
-      {tab === 'trades' && <Trades />}
+      {tab === 'report' && <Trades />}
       {tab === 'settings' && (
         <div className="space-y-3">
           <Settings />
@@ -71,10 +71,10 @@ export default function App() {
           <Log />
         </div>
       )}
-      {!s && tab === 'home' && <p className="text-slate-400">Connecting to server…</p>}
+      {!s && tab === 'auto' && <p className="text-slate-400">Connecting to server…</p>}
 
       <nav className="fixed inset-x-0 bottom-0 flex border-t border-slate-800 bg-slate-950">
-        {(['home', 'picks', 'movers', 'chart', 'trades', 'settings'] as Tab[]).map((t) => (
+        {(['trade', 'auto', 'picks', 'movers', 'report', 'settings'] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 py-3 text-xs capitalize ${tab === t ? 'text-sky-400' : 'text-slate-400'}`}>{t}</button>
         ))}
@@ -215,20 +215,6 @@ function Movers({ movers, onPick }: { movers: { gainers: Mover[]; losers: Mover[
     <div className="grid gap-3 sm:grid-cols-2">
       {table('Top gainers', movers.gainers)}
       {table('Top losers', movers.losers)}
-    </div>
-  );
-}
-
-function ChartTab({ symbol, setSymbol }: { symbol: string; setSymbol: (s: string) => void }) {
-  const [text, setText] = useState(symbol);
-  return (
-    <div className="space-y-3">
-      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setSymbol(text.trim().toUpperCase()); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Symbol e.g. INFY"
-          className="flex-1 rounded bg-slate-900 px-3 py-2 uppercase" />
-        <button className="rounded bg-sky-700 px-4">Go</button>
-      </form>
-      <Chart symbol={symbol} />
     </div>
   );
 }

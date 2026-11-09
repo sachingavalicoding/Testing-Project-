@@ -1,4 +1,18 @@
 @import "tailwindcss";
 
-body { font-family: ui-sans-serif, system-ui, sans-serif; }
+/* TradingView-like dark palette: every slate/green/red used in the app picks these up. */
+@theme {
+  --color-slate-950: #131722;
+  --color-slate-900: #1e222d;
+  --color-slate-800: #2a2e39;
+  --color-slate-700: #363a45;
+  --color-slate-500: #787b86;
+  --color-slate-400: #868993;
+  --color-slate-300: #b2b5be;
+  --color-slate-100: #d1d4dc;
+  --color-green-400: #26a69a;
+  --color-red-400: #ef5350;
+}
+
+body { font-family: ui-sans-serif, system-ui, sans-serif; background: #131722; color: #d1d4dc; }
 .num { font-variant-numeric: tabular-nums; }

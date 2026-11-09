@@ -7,6 +7,8 @@ import { netPnl, roundTripCharges } from './charges.ts';
 import type { Pattern, Signal } from './patterns.ts';
 import { positionSize } from './sizing.ts';
 import { vwap } from './indicators.ts';
+import { randomUUID } from 'node:crypto';
+import { roundToTick } from './ticks.ts';
 import { initialStop, ladderStop, type LadderRule } from './stops.ts';
 
 export interface Position {
@@ -23,6 +25,33 @@ export interface Position {
   orderId: string;
   /** Real mode: price is our estimate until the broker order book confirms it. */
   estimated: boolean;
+  /** Sell automatically when price reaches this (manual buys only) */
+  target?: number;
+}
+
+export interface ManualBuyRequest {
+  symbol: string;
+  qty: number;
+  type: 'market' | 'limit';
+  limitPrice?: number;
+  /** Sell if price falls to this */
+  stopPrice?: number;
+  /** Or: stop this many % below the buy price (default 1) */
+  stopPct?: number;
+  /** Optional profit target price */
+  targetPrice?: number;
+}
+
+export interface PendingOrder {
+  id: string;
+  symbol: string;
+  qty: number;
+  limitPrice: number;
+  stopPrice?: number;
+  stopPct?: number;
+  targetPrice?: number;
+  mode: Mode;
+  createdTs: number;
 }
 
 export interface MoneyRules {
@@ -108,6 +137,7 @@ export class AutoTrader {
       if (confirm !== REAL_CONFIRM_TEXT) throw new Error(`Type exactly: ${REAL_CONFIRM_TEXT}`);
     }
     this.running = false;
+    this.pending.clear();
     this.mode = mode;
     this.d.db.setSetting('mode', mode);
     this.d.db.log('warn', `Mode switched to ${mode.toUpperCase()}`);
@@ -126,10 +156,124 @@ export class AutoTrader {
 
   /** Kill switch: sell everything now and stop for the rest of the day. */
   async killAll(reason = 'Kill-all pressed'): Promise<void> {
+    await this.withLock(() => this.killAllNow(reason));
+  }
+
+  private async killAllNow(reason: string): Promise<void> {
     this.running = false;
     this.haltedReason = reason;
+    this.pending.clear();
     this.d.db.log('warn', `KILL ALL: ${reason}`);
     for (const p of [...this.positions.values()]) await this.exit(p, reason);
+  }
+
+  /** One thing at a time touches positions: price ticks, manual orders and the kill switch take turns. */
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.busy) await new Promise((r) => setTimeout(r, 10));
+    this.busy = true;
+    try {
+      return await fn();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // ---------- Manual trading (same positions, stops and loss cap as auto) ----------
+
+  pending = new Map<string, PendingOrder>();
+
+  /** Buy a share you picked. Market buys now; a limit below the price waits for the dip. */
+  async manualBuy(req: ManualBuyRequest): Promise<{ status: 'filled' | 'pending'; symbol: string; orderId?: string }> {
+    return this.withLock(async () => {
+      this.checkManualAllowed(req.symbol);
+      if (!Number.isInteger(req.qty) || req.qty < 1 || req.qty > 1_000_000) throw new Error('Quantity must be a whole number, 1 or more');
+      const q = this.d.store.quote(req.symbol);
+      if (!q) throw new Error(`No live price for ${req.symbol} yet. Wait a few seconds and try again.`);
+      if (this.pending.size >= 20) throw new Error('Too many waiting orders. Cancel some first.');
+      let ref = q.ltp;
+      if (req.type === 'limit') {
+        if (!(req.limitPrice && req.limitPrice > 0)) throw new Error('Enter a limit price');
+        ref = roundToTick(req.limitPrice);
+      }
+      this.checkStopTarget(ref, req.stopPrice, req.stopPct, req.targetPrice);
+      if (req.type === 'limit' && ref < q.ltp) {
+        const order: PendingOrder = {
+          id: randomUUID(), symbol: req.symbol, qty: req.qty, limitPrice: ref, stopPrice: req.stopPrice,
+          stopPct: req.stopPct, targetPrice: req.targetPrice, mode: this.mode, createdTs: this.now(),
+        };
+        this.pending.set(order.id, order);
+        this.d.db.log('info', `Waiting buy order: ${req.qty} ${req.symbol} at ₹${ref} or lower [${this.mode}]`);
+        return { status: 'pending' as const, symbol: req.symbol, orderId: order.id };
+      }
+      const pos = await this.openManual(q, req.qty, req.stopPrice, req.stopPct, req.targetPrice);
+      return { status: 'filled' as const, symbol: req.symbol, orderId: pos.orderId };
+    });
+  }
+
+  /** Sell (close) a position you hold. Shares only, no short selling. */
+  async manualSell(symbol: string): Promise<void> {
+    await this.withLock(async () => {
+      const p = this.positions.get(symbol);
+      if (!p) throw new Error(`You do not hold ${symbol}`);
+      await this.exit(p, 'Manual sell');
+    });
+  }
+
+  cancelPending(id: string): void {
+    const o = this.pending.get(id);
+    if (!o) throw new Error('That order is already gone');
+    this.pending.delete(id);
+    this.d.db.log('info', `Waiting order cancelled: ${o.symbol}`);
+  }
+
+  private checkManualAllowed(symbol: string): void {
+    if (this.haltedReason) throw new Error(`Stopped for today: ${this.haltedReason}`);
+    if (this.positions.has(symbol)) throw new Error(`You already hold ${symbol}. Sell it first.`);
+    for (const o of this.pending.values()) if (o.symbol === symbol) throw new Error(`There is already a waiting order for ${symbol}. Cancel it first.`);
+    if (!this.inTradingWindow()) throw new Error(`Market is closed for new buys (open 09:15 to ${this.rules.squareOffTime} IST)`);
+  }
+
+  private checkStopTarget(ref: number, stopPrice?: number, stopPct?: number, target?: number): void {
+    if (stopPrice !== undefined && !(stopPrice > 0 && stopPrice < ref)) throw new Error(`Stop must be below the buy price (₹${ref})`);
+    if (stopPct !== undefined && !(stopPct > 0 && stopPct < 50)) throw new Error('Stop % must be between 0 and 50');
+    if (target !== undefined && !(target > ref)) throw new Error(`Target must be above the buy price (₹${ref})`);
+  }
+
+  private async openManual(q: Quote, qty: number, stopPrice?: number, stopPct?: number, target?: number): Promise<Position> {
+    const broker = this.broker;
+    const probe = await broker.getMargin(q.symbol, qty, q.ltp);
+    const need = qty * probe.marginPerShare;
+    if (need > this.freeCash) {
+      throw new Error(`Needs about ₹${Math.round(need)} margin but only ₹${Math.round(this.freeCash)} is free. Lower the quantity.`);
+    }
+    const stop = stopPrice !== undefined ? roundToTick(stopPrice, 'down') : roundToTick(q.ltp * (1 - (stopPct ?? 1) / 100), 'down');
+    const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: 'Manual buy' });
+    if (res.status === 'rejected') throw new Error(`Broker rejected the order: ${res.message ?? 'unknown reason'}`);
+    const entry = res.avgPrice ?? q.ltp;
+    const pos: Position = {
+      symbol: q.symbol, mode: this.mode, qty, entry, entryTs: this.now(), stop, highest: entry,
+      marginUsed: need, pattern: 'manual', reason: 'Manual buy', orderId: res.orderId,
+      estimated: res.status !== 'filled', target,
+    };
+    this.positions.set(q.symbol, pos);
+    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
+    return pos;
+  }
+
+  private async fillPending(quotes: Quote[]): Promise<void> {
+    const byS = new Map(quotes.map((q) => [q.symbol, q]));
+    for (const o of [...this.pending.values()]) {
+      if (o.mode !== this.mode) { this.pending.delete(o.id); continue; }
+      const q = byS.get(o.symbol);
+      if (!q || q.ltp > o.limitPrice) continue;
+      this.pending.delete(o.id);
+      try {
+        if (this.positions.has(o.symbol)) continue;
+        await this.openManual(q, o.qty, o.stopPrice, o.stopPct, o.targetPrice);
+      } catch (e) {
+        this.d.db.log('warn', `Waiting order for ${o.symbol} could not be placed: ${(e as Error).message}`);
+      }
+    }
   }
 
   get freeCash(): number {
@@ -157,6 +301,7 @@ export class AutoTrader {
       unrealized: this.unrealized(),
       freeCash: Math.round(this.freeCash),
       rules: this.rules,
+      pending: [...this.pending.values()],
       positions: [...this.positions.values()].map((p) => ({
         ...p,
         ltp: this.d.store.quote(p.symbol)?.ltp ?? p.entry,
@@ -172,6 +317,7 @@ export class AutoTrader {
     try {
       this.rollDay();
       await this.manageOpen(quotes);
+      if (!this.haltedReason) await this.fillPending(quotes);
       if (this.running && !this.haltedReason) await this.lookForEntries(quotes);
     } catch (err) {
       this.d.db.log('error', `Trader error: ${(err as Error).message}`);
@@ -186,6 +332,7 @@ export class AutoTrader {
     this.day = today;
     this.realizedToday = 0;
     this.enteredToday.clear();
+    this.pending.clear();
     this.haltedReason = undefined;
   }
 
@@ -198,6 +345,7 @@ export class AutoTrader {
   private async manageOpen(quotes: Quote[]): Promise<void> {
     const byS = new Map(quotes.map((q) => [q.symbol, q]));
     if (!this.d.ignoreMarketHours && this.positions.size > 0 && istMinutes(this.now()) >= parseHHMM(this.rules.squareOffTime)) {
+      this.pending.clear();
       for (const p of [...this.positions.values()]) await this.exit(p, `Square-off time ${this.rules.squareOffTime}`);
       return;
     }
@@ -213,10 +361,11 @@ export class AutoTrader {
         }
       }
       if (q.ltp <= p.stop) await this.exit(p, `Stop hit at ${q.ltp} (stop ${p.stop})`);
+      else if (p.target && q.ltp >= p.target) await this.exit(p, `Target hit at ${q.ltp} (target ${p.target})`);
     }
     // Daily loss cap counts open losses too.
     if (!this.haltedReason && this.realizedToday + this.unrealized() <= -this.rules.dailyLossCap) {
-      await this.killAll(`Daily loss cap ₹${this.rules.dailyLossCap} reached`);
+      await this.killAllNow(`Daily loss cap ₹${this.rules.dailyLossCap} reached`);
     }
   }
 

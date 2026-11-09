@@ -19,6 +19,8 @@ export class UpstoxFeed implements PriceFeed {
   private timer: NodeJS.Timeout | undefined;
   private busy = false;
   lastError: string | undefined;
+  private keys: string[] = [];
+  private keyToSymbol = new Map<string, string>();
 
   constructor(private readonly client: UpstoxClient, private readonly intervalMs = 1000) {}
 
@@ -27,19 +29,19 @@ export class UpstoxFeed implements PriceFeed {
     const known = symbols.filter((s) => this.client.hasKey(s));
     const missing = symbols.filter((s) => !this.client.hasKey(s));
     if (missing.length) this.lastError = `Not found on Upstox: ${missing.join(', ')}`;
-    const keys = known.map((s) => this.client.keyFor(s));
-    const keyToSymbol = new Map(known.map((s) => [this.client.keyFor(s), s]));
+    this.keys = known.map((s) => this.client.keyFor(s));
+    this.keyToSymbol = new Map(known.map((s) => [this.client.keyFor(s), s]));
 
     const poll = async () => {
       if (this.busy || !this.client.hasToken) return;
       this.busy = true;
       try {
-        const url = this.client.api(`/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys.join(','))}`);
+        const url = this.client.api(`/v2/market-quote/quotes?instrument_key=${encodeURIComponent(this.keys.join(','))}`);
         const data = await this.client.request<Record<string, FullQuote & { instrument_token: string }>>('GET', url);
         const now = Date.now();
         const quotes: Quote[] = [];
         for (const q of Object.values(data ?? {})) {
-          const symbol = keyToSymbol.get(q.instrument_token);
+          const symbol = this.keyToSymbol.get(q.instrument_token);
           if (!symbol) continue;
           quotes.push({
             symbol,
@@ -62,6 +64,20 @@ export class UpstoxFeed implements PriceFeed {
     };
     await poll();
     this.timer = setInterval(poll, this.intervalMs);
+  }
+
+  search(query: string, limit = 15): string[] {
+    return this.client.searchSymbols(query, limit);
+  }
+
+  async watch(symbol: string): Promise<boolean> {
+    if (!this.client.hasKey(symbol)) return false;
+    const key = this.client.keyFor(symbol);
+    if (!this.keyToSymbol.has(key)) {
+      this.keys.push(key);
+      this.keyToSymbol.set(key, symbol);
+    }
+    return true;
   }
 
   stop(): void {

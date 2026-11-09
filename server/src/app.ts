@@ -8,10 +8,10 @@ import type { MarketStore } from './market/store.ts';
 import type { PriceFeed } from './market/feed.ts';
 import { istDate } from './market/time.ts';
 import type { AutoTrader } from './trading/autoTrader.ts';
-import { REAL_CONFIRM_TEXT } from './trading/autoTrader.ts';
+import { REAL_CONFIRM_TEXT, type ManualBuyRequest } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
 import type { UpstoxClient } from './broker/upstoxClient.ts';
-import type { Mode } from './types.ts';
+import type { Candle, Mode } from './types.ts';
 import type { AppSettings } from './settings.ts';
 import type { NewsService } from './news/news.ts';
 import { buildPicks } from './picks.ts';
@@ -89,6 +89,71 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
   });
 
+  const SYMBOL = /^[A-Z0-9&-]{1,20}$/;
+
+  /** Search any share by name. */
+  app.get<{ Querystring: { q?: string } }>('/api/search', async (req) => {
+    const symbols = feed.search(req.query.q ?? '', 15);
+    return symbols.map((symbol) => ({ symbol, ltp: store.quote(symbol)?.ltp }));
+  });
+
+  /** Make sure we have a live price for a share (any share, not only the chosen list). */
+  const ensureQuote = async (symbol: string): Promise<string | undefined> => {
+    if (store.quote(symbol)) return undefined;
+    if (!(await feed.watch(symbol))) return `${symbol} was not found. Check the name in the search box.`;
+    for (let i = 0; i < 40 && !store.quote(symbol); i++) await new Promise((r) => setTimeout(r, 100));
+    return store.quote(symbol) ? undefined : `No live price for ${symbol} yet. Is Upstox logged in?`;
+  };
+
+  app.post<{ Body: { symbol?: string } }>('/api/watch', async (req, reply) => {
+    const symbol = String(req.body?.symbol ?? '').toUpperCase();
+    if (!SYMBOL.test(symbol)) return reply.code(400).send(fail('Bad share name'));
+    const err = await ensureQuote(symbol);
+    return err ? reply.code(400).send(fail(err)) : { ok: true };
+  });
+
+  /** Manual buy. Sell = close the position (shares only). */
+  app.post<{ Body: Partial<ManualBuyRequest> & { side?: string } }>('/api/orders', async (req, reply) => {
+    const b = req.body ?? {};
+    const symbol = String(b.symbol ?? '').toUpperCase();
+    if (!SYMBOL.test(symbol)) return reply.code(400).send(fail('Bad share name'));
+    if (b.side !== undefined && b.side !== 'BUY') return reply.code(400).send(fail('Only buying is placed here. To sell, close the position.'));
+    if (b.type !== 'market' && b.type !== 'limit') return reply.code(400).send(fail('Order type must be market or limit'));
+    const nums = { qty: b.qty, limitPrice: b.limitPrice, stopPrice: b.stopPrice, stopPct: b.stopPct, targetPrice: b.targetPrice };
+    for (const [k, v] of Object.entries(nums)) {
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) return reply.code(400).send(fail(`${k} must be a number`));
+    }
+    try {
+      const err = await ensureQuote(symbol);
+      if (err) return reply.code(400).send(fail(err));
+      const r = await trader.manualBuy({
+        symbol, qty: b.qty as number, type: b.type, limitPrice: b.limitPrice,
+        stopPrice: b.stopPrice, stopPct: b.stopPct, targetPrice: b.targetPrice,
+      });
+      return { ok: true, ...r };
+    } catch (e) {
+      return reply.code(400).send(fail((e as Error).message));
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/orders/:id', async (req, reply) => {
+    try {
+      trader.cancelPending(req.params.id);
+      return { ok: true };
+    } catch (e) {
+      return reply.code(400).send(fail((e as Error).message));
+    }
+  });
+
+  app.post<{ Params: { symbol: string } }>('/api/positions/:symbol/close', async (req, reply) => {
+    try {
+      await trader.manualSell(req.params.symbol.toUpperCase());
+      return { ok: true };
+    } catch (e) {
+      return reply.code(400).send(fail((e as Error).message));
+    }
+  });
+
   app.get('/api/settings', async () => ({ settings: deps.settings.get(), active: deps.universe.current }));
 
   app.put('/api/settings', async (req, reply) => {
@@ -118,20 +183,37 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/api/quotes', async () => store.allQuotes().sort((a, b) => a.symbol.localeCompare(b.symbol)));
 
+  // History is cached for 20 seconds (brokers block fast repeat history calls); live ticks are merged on top.
+  const candleCache = new Map<string, { ts: number; candles: Candle[] }>();
+
   app.get<{ Params: { symbol: string }; Querystring: { interval?: string; days?: string } }>(
     '/api/candles/:symbol',
     async (req, reply) => {
       const interval = req.query.interval === 'day' ? 'day' : '1minute';
       const symbol = req.params.symbol.toUpperCase();
-      try {
-        if (interval === '1minute') {
-          const live = store.candlesFor(symbol);
-          if (live.length >= 30) return live;
+      if (!SYMBOL.test(symbol)) return reply.code(400).send(fail('Bad share name'));
+      const days = Math.min(400, Math.max(1, Number(req.query.days ?? (interval === 'day' ? 180 : 5))));
+      const key = `${symbol}|${interval}|${days}`;
+      let hist = candleCache.get(key);
+      if (!hist || Date.now() - hist.ts > 20_000) {
+        try {
+          await ensureQuote(symbol);
+          hist = { ts: Date.now(), candles: await feed.getCandles(symbol, interval, days) };
+          candleCache.set(key, hist);
+        } catch (e) {
+          if (interval === 'day' || store.candlesFor(symbol).length === 0) return reply.code(502).send(fail((e as Error).message));
+          hist = { ts: Date.now(), candles: [] };
         }
-        return await feed.getCandles(symbol, interval, Number(req.query.days ?? (interval === 'day' ? 180 : 1)));
-      } catch (e) {
-        return reply.code(502).send(fail((e as Error).message));
       }
+      if (interval === 'day') return hist.candles;
+      const live = store.candlesFor(symbol);
+      let out = hist.candles.filter((c) => c.t < (live[0]?.t ?? Infinity));
+      if (feed.name === 'mock' && out.length && live.length) {
+        // Fake history is random: join it to the live candles so the demo chart has no jump.
+        const k = live[0].o / out[out.length - 1].c;
+        out = out.map((c) => ({ ...c, o: c.o * k, h: c.h * k, l: c.l * k, c: c.c * k }));
+      }
+      return [...out, ...live];
     },
   );
 
