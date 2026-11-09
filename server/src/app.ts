@@ -193,6 +193,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
   });
 
+  if (!(deps.clientDist && existsSync(join(deps.clientDist, 'index.html')))) {
+    // Friendly message instead of a raw 404 when the web app has not been built yet.
+    app.get('/', async (_req, reply) =>
+      reply.type('text/html').send(
+        '<h2>Stock IQ server is running</h2><p>The web app is not built yet. Stop the server (Ctrl+C) and run:</p>' +
+          '<pre>npm install\nnpm run build\nnpm start</pre><p>Then reload this page.</p>',
+      ),
+    );
+  }
+
   if (deps.clientDist && existsSync(join(deps.clientDist, 'index.html'))) {
     await app.register(fastifyStatic, { root: deps.clientDist });
     app.setNotFoundHandler((req, reply) =>
