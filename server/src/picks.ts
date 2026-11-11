@@ -3,6 +3,7 @@ import { istDate } from './market/time.ts';
 import { shouldBlock, type NewsService, type NewsSummary } from './news/news.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { vwap } from './trading/indicators.ts';
+import { qualityReject, type QualityRules } from './trading/quality.ts';
 
 export interface Pick {
   symbol: string;
@@ -26,18 +27,23 @@ export async function buildPicks(deps: {
   patterns: Pattern[];
   news?: NewsService;
   maxDayMovePct: number;
+  /** Same entry checks the auto trader uses, so a Buy idea here is one it would really take */
+  quality?: QualityRules;
   limit?: number;
 }): Promise<Pick[]> {
   const limit = deps.limit ?? 8;
   const today = istDate();
   const rows: Pick[] = [];
+  const rejectedWhy = new Map<string, string>();
   for (const q of deps.store.allQuotes()) {
     if (q.prevClose <= 0) continue;
     const changePct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
     const candles = deps.store.candlesFor(q.symbol);
-    const signals = deps.patterns
-      .map((p) => p.check(q, candles))
-      .filter((s): s is NonNullable<typeof s> => !!s)
+    const fired = deps.patterns.map((p) => p.check(q, candles)).filter((s): s is NonNullable<typeof s> => !!s);
+    const rejects = deps.quality ? fired.map((s) => qualityReject(q, candles, s, deps.quality!)) : [];
+    if (rejects.length && rejects.every((r) => r !== undefined)) rejectedWhy.set(q.symbol, rejects[0]!);
+    const signals = fired
+      .filter((_, i) => rejects[i] === undefined)
       .map((s) => ({ pattern: s.pattern, reason: s.reason, score: s.score, stopPct: s.stopPct }));
     const dayCandles = candles.filter((c) => istDate(c.t) === today);
     const v = vwap(dayCandles);
@@ -74,6 +80,8 @@ export async function buildPicks(deps: {
         if (n) p.score = Math.max(0, Math.min(100, p.score + n.score * 5));
       } else if (p.signals.length) {
         p.why = 'Pattern fired but price is below today\'s average price (VWAP). Waiting.';
+      } else if (rejectedWhy.has(p.symbol)) {
+        p.why = `Pattern fired but skipped: ${rejectedWhy.get(p.symbol)}`;
       } else {
         p.why = `Up ${p.changePct}% but no entry pattern yet. Watching.`;
       }

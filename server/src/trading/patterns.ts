@@ -1,5 +1,5 @@
 import type { Candle, Quote } from '../types.ts';
-import { ema, sma } from './indicators.ts';
+import { ema, sma, vwap } from './indicators.ts';
 import { istMinutes, MARKET_OPEN } from '../market/time.ts';
 
 export interface Signal {
@@ -113,7 +113,89 @@ export const momentumBreakout: Pattern = {
   },
 };
 
-export const PATTERNS: Pattern[] = [openingRangeBreakout, emaCross, momentumBreakout];
+/**
+ * VWAP / EMA pullback bounce (trend continuation). The share is already up on the day and trending up
+ * (EMA9 above EMA21). It dipped back to its support (VWAP or EMA21), and now a green candle closes back
+ * above EMA9. The stop sits just under the pullback low, so it is tight, and the move back to the day's
+ * high is usually 1%+. This gives many more entries than the opening range alone.
+ */
+export const vwapPullback: Pattern = {
+  id: 'vwappb',
+  name: 'VWAP / EMA pullback bounce',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 25 || mins > 14 * 60 + 15) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct < 0.2 || dayPct > 3) return undefined;
+    const today = closed(all.filter((c) => sameDay(c.t, q.ts)), q.ts);
+    if (today.length < 25) return undefined;
+    const closes = today.map((c) => c.c);
+    const e9 = ema(closes, 9);
+    const e21 = ema(closes, 21);
+    const n = closes.length - 1;
+    const last = today[n];
+    const before = today[n - 1];
+    if (!(e9[n] > e21[n])) return undefined;
+    // The bounce: previous candle was still below EMA9 (pulling back), this one is green and closes back above it.
+    if (!(last.c > last.o && last.c > e9[n] && before.c <= e9[n - 1])) return undefined;
+    const vw = vwap(today);
+    if (vw !== undefined && q.ltp < vw) return undefined;
+    // The dip really touched support in the last 6 candles: EMA21 or VWAP.
+    const recent = today.slice(-6);
+    const touched = recent.some((c, i) => c.l <= e21[n - 5 + i] * 1.001 || (vw !== undefined && c.l <= vw * 1.0015));
+    if (!touched) return undefined;
+    const avgVol = sma(today.slice(-21, -1).map((c) => c.v), 20) ?? 0;
+    const volRatio = avgVol > 0 ? last.v / avgVol : 1;
+    const stopLow = Math.min(...today.slice(-4).map((c) => c.l));
+    return {
+      pattern: this.id,
+      reason: `Up ${dayPct.toFixed(1)}% and trending up; dipped to support and bounced above EMA9 ${e9[n].toFixed(2)} (VWAP ${vw?.toFixed(2) ?? '-'}), volume ${volRatio.toFixed(1)}x`,
+      stopPct: clamp((q.ltp - stopLow) / q.ltp + 0.0005, 0.003, 0.01),
+      score: 60 + Math.min(15, Math.round(dayPct * 5)) + (volRatio >= 1 ? 10 : 0),
+    };
+  },
+};
+
+/**
+ * Tight range breakout. The share rests in a very narrow range for 12 minutes (under 0.5% high to low),
+ * then a 1-minute candle closes above that range on 1.5x volume, with price above VWAP. Energy built up
+ * during the rest is released. The stop is the bottom of the range, so it is small by nature.
+ */
+export const tightRangeBreakout: Pattern = {
+  id: 'squeeze',
+  name: 'Tight range breakout',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 30 || mins > 14 * 60 + 15) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct < -0.2 || dayPct > 3) return undefined;
+    const today = closed(all.filter((c) => sameDay(c.t, q.ts)), q.ts);
+    if (today.length < 20) return undefined;
+    const last = today[today.length - 1];
+    const before = today[today.length - 2];
+    const base = today.slice(-13, -1);
+    const hi = Math.max(...base.map((c) => c.h));
+    const lo = Math.min(...base.map((c) => c.l));
+    const widthPct = (hi - lo) / hi;
+    if (widthPct > 0.005) return undefined;
+    if (last.c <= hi || before.c > hi) return undefined;
+    const avgVol = sma(base.map((c) => c.v), base.length) ?? 0;
+    if (avgVol > 0 && last.v < avgVol * 1.5) return undefined;
+    const vw = vwap(today);
+    if (vw !== undefined && q.ltp < vw) return undefined;
+    const volRatio = avgVol > 0 ? last.v / avgVol : 1;
+    return {
+      pattern: this.id,
+      reason: `Rested in a ${(widthPct * 100).toFixed(2)}% range for 12 min, then closed above ${hi.toFixed(2)} on volume ${volRatio.toFixed(1)}x`,
+      stopPct: clamp((last.c - lo) / last.c + 0.0005, 0.003, 0.007),
+      score: 60 + Math.min(25, Math.round(volRatio * 5)),
+    };
+  },
+};
+
+export const PATTERNS: Pattern[] = [openingRangeBreakout, vwapPullback, tightRangeBreakout, emaCross, momentumBreakout];
 
 function sameDay(a: number, b: number): boolean {
   const off = 5.5 * 3600_000;

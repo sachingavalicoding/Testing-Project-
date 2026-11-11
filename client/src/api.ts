@@ -54,6 +54,9 @@ export interface AppSettings {
   dailyLossCap: number;
   requireAboveVwap: boolean;
   newsFilter: boolean;
+  qualityGate: boolean;
+  targetPct: number;
+  minRewardRisk: number;
 }
 export interface Pick {
   symbol: string; ltp: number; changePct: number; aboveVwap?: boolean;
