@@ -48,14 +48,13 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 export const rupee = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; slippagePct: number }
+export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; slippagePct: number; targetPct: number; stopLossPct: number }
 export interface AppSettings {
   lists: Record<'large' | 'mid' | 'small', ListRules>;
   dailyLossCap: number;
   requireAboveVwap: boolean;
   newsFilter: boolean;
   qualityGate: boolean;
-  targetPct: number;
   minRewardRisk: number;
 }
 export interface Pick {

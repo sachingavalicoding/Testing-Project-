@@ -19,7 +19,7 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
   - **Tight range breakout**: 12 quiet minutes (under 0.5% range), then a close above the range on 1.5x volume, above VWAP.
   - **Momentum breakout**: share up 2%+ today, fresh 1-minute break of the last 20 candles' high, volume 2x average (made for mid/small caps that run 5-10%)
 - **Entry quality gate** (Settings, on by default): short-term uptrend (EMA9 above EMA21), RSI between 50 and 76, price above VWAP but not more than 1.2% above it, no entries in the first 10 minutes or after 2:30 PM, and no entries on a day when most of the list is falling. The Picks tab uses the same checks.
-- **Profit target and reward-to-risk** (Settings): every auto entry gets a target (default 1%, minimum 0.75%). A trade is skipped unless the target is at least 1.5x the stop distance, so stops stay tight and wins pay more than losses cost.
+- **Profit target and stop loss per list** (Settings, each of Large / Mid / Small): starting values are target 1% / widest stop 0.6% for Large, 1.5% / 0.9% for Mid, 2.5% / 1.5% for Small. Every auto entry gets that target (minimum 0.75%). A trade is skipped when its natural stop is wider than the list's limit, or when the target is less than 1.5x the stop (the reward-to-risk setting). Change them any time; switching the share list applies that list's values.
 - Size of each entry comes from the **real Upstox MIS margin** (margin API) when logged in, and from your risk per trade.
 - Stop loss capped so a loss **including all charges** never goes past `RISK_PER_TRADE`.
 - Percent ladder: stop moves to break-even (incl. charges), then locks profit step by step. It never moves down.

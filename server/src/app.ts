@@ -172,7 +172,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       patterns: deps.patterns,
       news: deps.news,
       maxDayMovePct: s.lists[deps.universe.current].maxDayMovePct,
-      quality: { ...defaultQuality, enabled: s.qualityGate, targetPct: s.targetPct, minRewardRisk: s.minRewardRisk },
+      quality: { ...defaultQuality, enabled: s.qualityGate, targetPct: s.lists[deps.universe.current].targetPct, stopLossPct: s.lists[deps.universe.current].stopLossPct, minRewardRisk: s.minRewardRisk },
     });
   });
 

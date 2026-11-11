@@ -80,6 +80,32 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.size).toBe(0);
   });
 
+  it('logs why a share was skipped, once, not every second', async () => {
+    trader.start();
+    await push(quote('GOFAST', 1050, 1000));
+    await push(quote('GOFAST', 1051, 1000));
+    await push(quote('GOFAST', 1052, 1000));
+    const skips = db.recentEvents(50).filter((e) => e.message.startsWith('SKIP GOFAST'));
+    expect(skips).toHaveLength(1);
+    expect(skips[0].message).toContain('already moved 5.0% today (limit 3%)');
+  });
+
+  it('logs when the quality check skips a signal', async () => {
+    trader.quality = { ...trader.quality, enabled: true, targetPct: 1, stopLossPct: 0.5 };
+    trader.start();
+    await push(quote('GOOD', 1000)); // the test pattern's 1% stop is wider than the 0.5% limit
+    expect(trader.positions.size).toBe(0);
+    expect(db.recentEvents(20).some((e) => /SKIP GOOD: test fired but stop 1.00% is wider than allowed/.test(e.message))).toBe(true);
+  });
+
+  it('saves the reason and the checks it passed with the buy', async () => {
+    trader.quality = { ...trader.quality, enabled: true, targetPct: 3, stopLossPct: 2, firstEntryMin: 0, lastEntryMinutes: 24 * 60 };
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const p = trader.positions.get('GOOD')!;
+    expect(p.reason).toMatch(/test signal. Checks passed: score 50, stop 1.00%, target 3%/);
+  });
+
   it('takes a bigger mover once the day-move limit is raised (small-cap list)', async () => {
     trader.setMaxDayMovePct(12);
     trader.start();

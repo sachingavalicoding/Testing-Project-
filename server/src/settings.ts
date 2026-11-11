@@ -11,7 +11,18 @@ export interface ListRules {
   maxOpenPositions: number;
   /** Paper fills are made worse by this % so paper results are honest (real fills slip too) */
   slippagePct: number;
+  /** Profit target for every auto entry, % above the buy price (minimum 0.75) */
+  targetPct: number;
+  /** Widest stop loss allowed, % below the buy price. A pattern whose natural stop is wider is skipped */
+  stopLossPct: number;
 }
+
+/** Starting target / stop per list: bigger moves and noise in mid and small caps need more room. */
+export const LIST_TARGETS: Record<UniverseId, { targetPct: number; stopLossPct: number }> = {
+  large: { targetPct: 1, stopLossPct: 0.6 },
+  mid: { targetPct: 1.5, stopLossPct: 0.9 },
+  small: { targetPct: 2.5, stopLossPct: 1.5 },
+};
 
 export interface AppSettings {
   lists: Record<UniverseId, ListRules>;
@@ -22,8 +33,6 @@ export interface AppSettings {
   newsFilter: boolean;
   /** Extra entry checks: trend (EMA9>EMA21), RSI, not chasing, time window, weak-market stop, reward-to-risk */
   qualityGate: boolean;
-  /** Profit target for every auto entry, % (minimum 0.75) */
-  targetPct: number;
   /** Target must be at least this many times the stop distance */
   minRewardRisk: number;
 }
@@ -32,15 +41,14 @@ export function defaultSettings(c: Config): AppSettings {
   const m = c.money;
   return {
     lists: {
-      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.05 },
-      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.1 },
-      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.3 },
+      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.05, ...LIST_TARGETS.large },
+      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.1, ...LIST_TARGETS.mid },
+      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.3, ...LIST_TARGETS.small },
     },
     dailyLossCap: m.dailyLossCap,
     requireAboveVwap: true,
     newsFilter: true,
     qualityGate: true,
-    targetPct: 1,
     minRewardRisk: 1.5,
   };
 }
@@ -67,6 +75,9 @@ export function validateSettings(input: unknown): AppSettings {
       riskPerTrade: inRange(`${id}: risk per trade`, r.riskPerTrade, 10, 100_000),
       maxOpenPositions: inRange(`${id}: max open positions`, r.maxOpenPositions, 1, 20, true),
       slippagePct: inRange(`${id}: paper slippage %`, r.slippagePct, 0, 2),
+      // Older saved settings do not have these: use the starting values for that list.
+      targetPct: r.targetPct === undefined ? LIST_TARGETS[id].targetPct : inRange(`${id}: profit target %`, r.targetPct, 0.75, 10),
+      stopLossPct: r.stopLossPct === undefined ? LIST_TARGETS[id].stopLossPct : inRange(`${id}: stop loss %`, r.stopLossPct, 0.2, 5),
     };
   }
   if (typeof s.requireAboveVwap !== 'boolean' || typeof s.newsFilter !== 'boolean') throw new Error('Filters must be on or off');
@@ -77,7 +88,6 @@ export function validateSettings(input: unknown): AppSettings {
     newsFilter: s.newsFilter,
     // Older saved settings do not have these yet: use the defaults instead of throwing them away.
     qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
-    targetPct: s.targetPct === undefined ? 1 : inRange('profit target %', s.targetPct, 0.75, 5),
     minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
   };
 }

@@ -52,6 +52,10 @@ export default function Settings() {
             value={s.lists[cap].maxOpenPositions} onChange={(n) => setList(cap, { maxOpenPositions: n })} />
           <Field label="Paper slippage (%)" hint="Makes paper fills a bit worse, like real life. Small caps slip more" step={0.05}
             value={s.lists[cap].slippagePct} onChange={(n) => setList(cap, { slippagePct: n })} />
+          <Field label="Profit target (%)" hint="Sell when the share gains this much (minimum 0.75)" step={0.25}
+            value={s.lists[cap].targetPct} onChange={(n) => setList(cap, { targetPct: n })} />
+          <Field label="Widest stop loss (%)" hint="Entries whose natural stop is wider than this are skipped" step={0.1}
+            value={s.lists[cap].stopLossPct} onChange={(n) => setList(cap, { stopLossPct: n })} />
         </section>
       ))}
 
@@ -75,8 +79,6 @@ export default function Settings() {
           <span>Only take high quality entries<br /><span className="text-xs text-slate-500">Needs short-term uptrend (EMA9 above EMA21), healthy RSI, price not stretched above VWAP, no entries in the first 10 minutes or after 2:30 PM, and skips the day when most shares are falling</span></span>
           <input type="checkbox" checked={s.qualityGate} onChange={(e) => setS({ ...s, qualityGate: e.target.checked })} className="h-5 w-5" />
         </label>
-        <Field label="Profit target (%)" hint="Sell when a share gains this much from the buy price. Minimum 0.75, 1 to 1.5 suits Nifty shares" step={0.25}
-          value={s.targetPct} onChange={(n) => setS({ ...s, targetPct: n })} />
         <Field label="Reward to risk (times)" hint="The target must be at least this many times the stop distance, otherwise the trade is skipped" step={0.25}
           value={s.minRewardRisk} onChange={(n) => setS({ ...s, minRewardRisk: n })} />
       </section>

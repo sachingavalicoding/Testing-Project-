@@ -10,7 +10,7 @@ import { vwap } from './indicators.ts';
 import { randomUUID } from 'node:crypto';
 import { roundToTick } from './ticks.ts';
 import { initialStop, ladderStop, type LadderRule } from './stops.ts';
-import { defaultQuality, marketBreadthPct, qualityReject, type QualityRules } from './quality.ts';
+import { defaultQuality, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
 
 export interface Position {
   symbol: string;
@@ -90,6 +90,9 @@ export class AutoTrader {
   positions = new Map<string, Position>();
   realizedToday = 0;
   private enteredToday = new Set<string>();
+  /** When each skip reason was last written to the log, so a share that stays skipped is not logged every second */
+  private skipLogged = new Map<string, number>();
+  private weakMarketLogged = false;
   private day: string;
   private busy = false;
   private readonly now: () => number;
@@ -336,6 +339,7 @@ export class AutoTrader {
     this.day = today;
     this.realizedToday = 0;
     this.enteredToday.clear();
+    this.skipLogged.clear();
     this.pending.clear();
     this.haltedReason = undefined;
   }
@@ -379,24 +383,41 @@ export class AutoTrader {
     if (this.quality.enabled) {
       // A weak market (most shares down) makes long entries fail more often: sit out.
       const breadth = marketBreadthPct(quotes);
-      if (breadth !== undefined && breadth < this.quality.breadthMin) return;
+      if (breadth !== undefined && breadth < this.quality.breadthMin) {
+        if (!this.weakMarketLogged) {
+          this.weakMarketLogged = true;
+          this.d.db.log('info', `SKIP all entries: market is weak (median share ${breadth.toFixed(2)}% today, limit ${this.quality.breadthMin}%)`);
+        }
+        return;
+      }
+      this.weakMarketLogged = false;
     }
     const candidates: Array<{ q: Quote; s: Signal }> = [];
     for (const q of quotes) {
       if (this.positions.has(q.symbol) || this.enteredToday.has(q.symbol)) continue;
-      // 1-minute entry check: skip shares that already moved too much today.
       const dayMove = q.prevClose > 0 ? Math.abs((q.ltp - q.prevClose) / q.prevClose) * 100 : 0;
-      if (dayMove > this.rules.maxDayMovePct) continue;
       const candles = this.d.store.candlesFor(q.symbol);
       for (const p of this.d.patterns) {
         const s = p.check(q, candles);
         if (!s) continue;
+        // 1-minute entry check: skip shares that already moved too much today.
+        if (dayMove > this.rules.maxDayMovePct) {
+          this.logSkip(q.symbol, s.pattern, `already moved ${dayMove.toFixed(1)}% today (limit ${this.rules.maxDayMovePct}%)`);
+          continue;
+        }
         if (this.filters.requireAboveVwap) {
           const today = candles.filter((c) => istDate(c.t) === this.day);
           const v = vwap(today);
-          if (v !== undefined && q.ltp < v) continue;
+          if (v !== undefined && q.ltp < v) {
+            this.logSkip(q.symbol, s.pattern, `price ${q.ltp} is below today's average price (VWAP ${v.toFixed(2)})`);
+            continue;
+          }
         }
-        if (qualityReject(q, candles, s, this.quality) !== undefined) continue;
+        const why = qualityReject(q, candles, s, this.quality);
+        if (why !== undefined) {
+          this.logSkip(q.symbol, s.pattern, why);
+          continue;
+        }
         candidates.push({ q, s });
       }
     }
@@ -416,6 +437,15 @@ export class AutoTrader {
     }
   }
 
+  /** Write 'why we did NOT buy' to the log, at most once per share and reason every 10 minutes. */
+  private logSkip(symbol: string, pattern: string, reason: string): void {
+    const key = `${symbol}|${pattern}|${reason.replace(/[0-9.]+/g, '#')}`;
+    const last = this.skipLogged.get(key);
+    if (last !== undefined && this.now() - last < 10 * 60_000) return;
+    this.skipLogged.set(key, this.now());
+    this.d.db.log('info', `SKIP ${symbol}: ${pattern} fired but ${reason}`);
+  }
+
   private async enter(q: Quote, s: Signal): Promise<void> {
     const broker = this.broker;
     // Ask the broker for the real MIS margin for one share first, then size.
@@ -432,7 +462,9 @@ export class AutoTrader {
       return;
     }
     const stop = initialStop(q.ltp, qty, s.stopPct, this.rules.riskPerTrade);
-    const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: s.reason });
+    // Saved with the trade: the pattern's reason plus every check it passed.
+    const why = this.quality.enabled ? `${s.reason}. Checks passed: ${qualitySummary(q, this.d.store.candlesFor(q.symbol), this.quality, s)}` : s.reason;
+    const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: why });
     if (res.status === 'rejected') {
       this.d.db.log('warn', `${q.symbol} BUY rejected: ${res.message ?? 'unknown'}`);
       return;
@@ -450,14 +482,14 @@ export class AutoTrader {
       highest: entry,
       marginUsed: qty * probe.marginPerShare,
       pattern: s.pattern,
-      reason: s.reason,
+      reason: why,
       orderId: res.orderId,
       estimated: res.status !== 'filled',
       target,
     });
     this.d.db.log(
       'info',
-      `BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${s.reason}`,
+      `BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
     );
   }
 

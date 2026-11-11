@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { defaultSettings, validateSettings } from '../src/settings.ts';
 import { rsi } from '../src/trading/indicators.ts';
 import { tightRangeBreakout, vwapPullback } from '../src/trading/patterns.ts';
 import { defaultQuality, marketBreadthPct, maxStopFraction, qualityReject } from '../src/trading/quality.ts';
@@ -78,7 +79,12 @@ describe('qualityReject', () => {
     expect(qualityReject(quote(100.95), build(up), sig(0.005), rules)).toBeUndefined();
   });
   it('rejects a stop that is too wide for the target', () => {
-    expect(qualityReject(quote(100.95), build(up), sig(0.012), rules)).toMatch(/too wide/);
+    expect(qualityReject(quote(100.95), build(up), sig(0.012), rules)).toMatch(/wider than allowed/);
+  });
+  it('applies the per-list stop loss limit even when reward-to-risk would allow more', () => {
+    const midRules = { ...rules, targetPct: 3, stopLossPct: 0.9 };
+    expect(qualityReject(quote(100.95), build(up), sig(0.008), midRules)).toBeUndefined();
+    expect(qualityReject(quote(100.95), build(up), sig(0.012), midRules)).toMatch(/wider than allowed/);
   });
   it('rejects the first minutes and late entries', () => {
     expect(qualityReject(quote(100.95, 100, Date.UTC(2026, 10, 5, 3, 50)), build(up), sig(0.005), rules)).toMatch(/jumpy/);
@@ -103,9 +109,37 @@ describe('helpers', () => {
     expect(maxStopFraction({ ...defaultQuality, targetPct: 1, minRewardRisk: 1.5 })).toBeCloseTo(0.00667, 4);
     expect(maxStopFraction(defaultQuality)).toBe(Infinity);
   });
+  it('maxStopFraction takes the tighter of the stop limit and reward-to-risk', () => {
+    expect(maxStopFraction({ ...defaultQuality, targetPct: 3, minRewardRisk: 1.5, stopLossPct: 0.9 })).toBeCloseTo(0.009, 5);
+    expect(maxStopFraction({ ...defaultQuality, targetPct: 1, minRewardRisk: 1.5, stopLossPct: 2 })).toBeCloseTo(0.00667, 4);
+  });
   it('market breadth is the median day change', () => {
     const qs = Array.from({ length: 25 }, (_, i) => quote(100 + (i - 12) * 0.1));
     expect(marketBreadthPct(qs)).toBeCloseTo(0, 5);
     expect(marketBreadthPct(qs.slice(0, 5))).toBeUndefined();
+  });
+});
+
+describe('per-list target and stop settings', () => {
+  const cfg = { money: { riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 2000, maxDayMovePctByList: { large: 3, mid: 6, small: 12 } } } as never;
+  it('gives each list its own starting target and stop', () => {
+    const d = defaultSettings(cfg);
+    expect(d.lists.large.targetPct).toBe(1);
+    expect(d.lists.mid.targetPct).toBeGreaterThan(d.lists.large.targetPct);
+    expect(d.lists.small.stopLossPct).toBeGreaterThan(d.lists.mid.stopLossPct);
+  });
+  it('keeps older saved settings and fills the new fields from the list defaults', () => {
+    const d = defaultSettings(cfg);
+    const old = JSON.parse(JSON.stringify(d));
+    for (const id of ['large', 'mid', 'small']) { delete old.lists[id].targetPct; delete old.lists[id].stopLossPct; }
+    expect(validateSettings(old).lists.mid.targetPct).toBe(d.lists.mid.targetPct);
+  });
+  it('rejects a target below 0.75% or a silly stop', () => {
+    const d = defaultSettings(cfg);
+    d.lists.large.targetPct = 0.5;
+    expect(() => validateSettings(d)).toThrow(/profit target/);
+    d.lists.large.targetPct = 1;
+    d.lists.large.stopLossPct = 9;
+    expect(() => validateSettings(d)).toThrow(/stop loss/);
   });
 });
