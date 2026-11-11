@@ -18,7 +18,8 @@ export interface SavedPick {
 export function matchTrades(picks: SavedPick[], trades: TradeRow[]): Map<number, TradeRow> {
   const used = new Set<number>();
   const out = new Map<number, TradeRow>();
-  const mine = trades.filter((t) => t.mode === 'paper' && t.pattern === 'manual');
+  // The scanner's picks are long ideas, so only your long trades are matched to them.
+  const mine = trades.filter((t) => t.mode === 'paper' && t.pattern === 'manual' && (t.side ?? 'long') === 'long');
   for (const p of [...picks].sort((a, b) => a.ts - b.ts)) {
     const t = mine.find((x) => x.id !== undefined && !used.has(x.id) && x.symbol === p.symbol && x.day === p.day && x.entry_ts >= p.ts - 60_000);
     if (t && t.id !== undefined) {

@@ -10,6 +10,8 @@ export interface Signal {
   stopPct: number;
   /** 0-100, higher is stronger */
   score: number;
+  /** 'short' = sell first, buy back later (intraday). Missing means a normal long entry. */
+  side?: 'long' | 'short';
 }
 
 export interface Pattern {
@@ -197,7 +199,179 @@ export const tightRangeBreakout: Pattern = {
   },
 };
 
-export const PATTERNS: Pattern[] = [openingRangeBreakout, vwapPullback, tightRangeBreakout, emaCross, momentumBreakout];
+// ---------------------------------------------------------------------------------------------------------------
+// SHORT entries (intraday sell first, buy back later). Each one is the mirror of a long pattern above.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Opening range breakdown: after the first 15 minutes, sell when price breaks the LOW of those 15 minutes on volume. */
+export const openingRangeBreakdown: Pattern = {
+  id: 'orb15s',
+  name: 'Opening range breakdown (15 min, short)',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 15 || mins > MARKET_OPEN + 120) return undefined;
+    const today = all.filter((c) => istMinutes(c.t) >= MARKET_OPEN && sameDay(c.t, q.ts));
+    const range = today.filter((c) => istMinutes(c.t) < MARKET_OPEN + 15);
+    if (range.length < 10) return undefined;
+    const high = Math.max(...range.map((c) => c.h));
+    const low = Math.min(...range.map((c) => c.l));
+    const done = closed(today, q.ts);
+    const last = done[done.length - 1];
+    if (!last || last.c >= low) return undefined;
+    const before = done[done.length - 2];
+    if (before && before.c < low) return undefined; // must be a fresh break
+    const avgVol = sma(done.slice(0, -1).map((c) => c.v), Math.min(20, done.length - 1)) ?? 0;
+    if (avgVol > 0 && last.v < avgVol * 1.2) return undefined;
+    const rangePct = (high - low) / low;
+    return {
+      pattern: this.id,
+      side: 'short',
+      reason: `Broke below the 15-min low ${low.toFixed(2)} (range ${(rangePct * 100).toFixed(2)}%) on volume ${Math.round(last.v)} vs avg ${Math.round(avgVol)}`,
+      stopPct: clamp(rangePct, 0.005, 0.015),
+      score: 60 + Math.min(30, Math.round((last.v / Math.max(1, avgVol)) * 5)),
+    };
+  },
+};
+
+/**
+ * VWAP / EMA rejection (trend continuation down). The share is down on the day and trending down (EMA9 below EMA21).
+ * It bounced up to resistance (VWAP or EMA21), and now a red candle closes back under EMA9 on volume. The stop sits
+ * just above the bounce high.
+ */
+export const vwapRejection: Pattern = {
+  id: 'vwaprj',
+  name: 'VWAP / EMA rejection (short)',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 25 || mins > 14 * 60 + 15) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct > -0.2 || dayPct < -3) return undefined;
+    const today = closed(all.filter((c) => sameDay(c.t, q.ts)), q.ts);
+    if (today.length < 25) return undefined;
+    const closes = today.map((c) => c.c);
+    const e9 = ema(closes, 9);
+    const e21 = ema(closes, 21);
+    const n = closes.length - 1;
+    const last = today[n];
+    const before = today[n - 1];
+    if (!(e9[n] < e21[n])) return undefined;
+    // The rejection: previous candle was still above EMA9 (bouncing), this one is red and closes back under it.
+    if (!(last.c < last.o && last.c < e9[n] && before.c >= e9[n - 1])) return undefined;
+    const vw = vwap(today);
+    if (vw !== undefined && q.ltp > vw) return undefined;
+    // The bounce really reached resistance in the last 6 candles: EMA21 or VWAP.
+    const recent = today.slice(-6);
+    const touched = recent.some((c, i) => c.h >= e21[n - 5 + i] * 0.999 || (vw !== undefined && c.h >= vw * 0.9985));
+    if (!touched) return undefined;
+    const avgVol = sma(today.slice(-21, -1).map((c) => c.v), 20) ?? 0;
+    const volRatio = avgVol > 0 ? last.v / avgVol : 1;
+    if (volRatio < 1.2) return undefined; // a rejection on thin volume is just a pause
+    const stopHigh = Math.max(...today.slice(-4).map((c) => c.h));
+    return {
+      pattern: this.id,
+      side: 'short',
+      reason: `Down ${Math.abs(dayPct).toFixed(1)}% and trending down; bounced to resistance and was rejected under EMA9 ${e9[n].toFixed(2)} (VWAP ${vw?.toFixed(2) ?? '-'}), volume ${volRatio.toFixed(1)}x`,
+      stopPct: clamp((stopHigh - q.ltp) / q.ltp + 0.0005, 0.004, 0.01),
+      score: 60 + Math.min(15, Math.round(Math.abs(dayPct) * 5)) + Math.min(10, Math.round((volRatio - 1) * 10)),
+    };
+  },
+};
+
+/** Tight range breakdown: 12 quiet minutes (under 0.5% range), then a close BELOW the range on 1.5x volume, under VWAP. */
+export const tightRangeBreakdown: Pattern = {
+  id: 'squeezes',
+  name: 'Tight range breakdown (short)',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 30 || mins > 14 * 60 + 15) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct > 0.2 || dayPct < -3) return undefined;
+    const today = closed(all.filter((c) => sameDay(c.t, q.ts)), q.ts);
+    if (today.length < 20) return undefined;
+    const last = today[today.length - 1];
+    const before = today[today.length - 2];
+    const base = today.slice(-13, -1);
+    const hi = Math.max(...base.map((c) => c.h));
+    const lo = Math.min(...base.map((c) => c.l));
+    const widthPct = (hi - lo) / hi;
+    if (widthPct > 0.005) return undefined;
+    if (last.c >= lo || before.c < lo) return undefined;
+    const avgVol = sma(base.map((c) => c.v), base.length) ?? 0;
+    if (avgVol > 0 && last.v < avgVol * 1.5) return undefined;
+    const vw = vwap(today);
+    if (vw !== undefined && q.ltp > vw) return undefined;
+    const volRatio = avgVol > 0 ? last.v / avgVol : 1;
+    return {
+      pattern: this.id,
+      side: 'short',
+      reason: `Rested in a ${(widthPct * 100).toFixed(2)}% range for 12 min, then closed below ${lo.toFixed(2)} on volume ${volRatio.toFixed(1)}x`,
+      stopPct: clamp((hi - last.c) / last.c + 0.0005, 0.004, 0.007),
+      score: 60 + Math.min(25, Math.round(volRatio * 5)),
+    };
+  },
+};
+
+/** EMA 9 crosses BELOW EMA 21 on 1-minute closes while price is under the day open. */
+export const emaCrossDown: Pattern = {
+  id: 'ema9x21s',
+  name: 'EMA 9/21 cross down (short)',
+  check(q, all) {
+    const done = closed(all, q.ts);
+    if (done.length < 30) return undefined;
+    const closes = done.map((c) => c.c);
+    const fast = ema(closes, 9);
+    const slow = ema(closes, 21);
+    const n = closes.length - 1;
+    const crossed = fast[n] < slow[n] && fast[n - 1] >= slow[n - 1];
+    if (!crossed || q.ltp > q.open) return undefined;
+    return {
+      pattern: this.id,
+      side: 'short',
+      reason: `EMA9 ${fast[n].toFixed(2)} crossed below EMA21 ${slow[n].toFixed(2)}; price under day open ${q.open}`,
+      stopPct: 0.01,
+      score: 55,
+    };
+  },
+};
+
+/** Momentum breakdown: down 2%+ today, a fresh 1-minute close below the last 20 candles' low, volume 2x. */
+export const momentumBreakdown: Pattern = {
+  id: 'moms',
+  name: 'Momentum breakdown (down 2%+, volume surge, short)',
+  check(q, all) {
+    const mins = istMinutes(q.ts);
+    if (mins < MARKET_OPEN + 30 || mins > 14 * 60 + 30) return undefined;
+    if (q.prevClose <= 0) return undefined;
+    const dayPct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
+    if (dayPct > -2) return undefined;
+    const done = closed(all, q.ts);
+    if (done.length < 25) return undefined;
+    const last = done[done.length - 1];
+    const before = done[done.length - 2];
+    const prior = done.slice(-21, -1);
+    const priorLow = Math.min(...prior.map((c) => c.l));
+    const priorHigh = Math.max(...prior.map((c) => c.h));
+    if (last.c >= priorLow || before.c < priorLow) return undefined;
+    const avgVol = sma(prior.map((c) => c.v), prior.length) ?? 0;
+    if (avgVol > 0 && last.v < avgVol * 2) return undefined;
+    const rangePct = (priorHigh - priorLow) / priorLow;
+    return {
+      pattern: this.id,
+      side: 'short',
+      reason: `Down ${Math.abs(dayPct).toFixed(1)}% today, 1-min close ${last.c} broke the 20-candle low ${priorLow.toFixed(2)} on volume ${Math.round(last.v)} vs avg ${Math.round(avgVol)}`,
+      stopPct: clamp(rangePct / 2, 0.01, 0.03),
+      score: 55 + Math.min(35, Math.round(Math.abs(dayPct) * 3)),
+    };
+  },
+};
+
+export const LONG_PATTERNS: Pattern[] = [openingRangeBreakout, vwapPullback, tightRangeBreakout, emaCross, momentumBreakout];
+export const SHORT_PATTERNS: Pattern[] = [openingRangeBreakdown, vwapRejection, tightRangeBreakdown, emaCrossDown, momentumBreakdown];
+
+/** Long and short entries together. The trader only takes the short ones when short selling is switched on. */
+export const PATTERNS: Pattern[] = [...LONG_PATTERNS, ...SHORT_PATTERNS];
 
 function sameDay(a: number, b: number): boolean {
   const off = 5.5 * 3600_000;

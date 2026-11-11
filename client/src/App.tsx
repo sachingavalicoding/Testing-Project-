@@ -167,7 +167,7 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
         {s.positions.map((p) => (
           <div key={p.symbol} className="border-t border-slate-800 py-2 text-sm" onClick={() => openChart(p.symbol)}>
             <div className="flex justify-between">
-              <span className="font-semibold">{p.symbol} × {p.qty}</span>
+              <span className="font-semibold">{p.symbol} × {p.qty} {p.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>}</span>
               <span className={`num ${pnlColor(p.pnl)}`}>{rupee(p.pnl)}</span>
             </div>
             <div className="num flex justify-between text-slate-400">
@@ -238,10 +238,10 @@ function Trades() {
         {report.trades.map((t) => (
           <div key={t.id} className="border-t border-slate-800 py-2 text-sm">
             <div className="flex justify-between">
-              <span className="font-semibold">{t.symbol} × {t.qty} <span className="text-xs text-slate-500">{t.mode}</span></span>
+              <span className="font-semibold">{t.symbol} × {t.qty} {t.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>} <span className="text-xs text-slate-500">{t.mode}</span></span>
               <span className={`num ${pnlColor(t.net_pnl)}`}>{rupee(t.net_pnl)}</span>
             </div>
-            <div className="num text-slate-400">{t.entry_price} → {t.exit_price} · charges {rupee(t.charges)}</div>
+            <div className="num text-slate-400">{t.side === 'short' ? `sold ${t.entry_price} → bought back ${t.exit_price}` : `${t.entry_price} → ${t.exit_price}`} · charges {rupee(t.charges)}</div>
             <div className="text-xs text-slate-500">In: {t.entry_reason}</div>
             <div className="text-xs text-slate-500">Out: {t.exit_reason}</div>
           </div>

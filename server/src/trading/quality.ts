@@ -51,20 +51,33 @@ export function qualitySummary(q: Quote, candles: Candle[], r: QualityRules, s: 
   const current = Math.floor(q.ts / 60_000) * 60_000;
   const done = candles.filter((c) => c.t < current);
   const v = vwap(done.filter((c) => istDate(c.t) === day));
-  if (v !== undefined) parts.push(`${(((q.ltp - v) / v) * 100).toFixed(2)}% above VWAP ${v.toFixed(2)}`);
+  const short = s.side === 'short';
+  if (v !== undefined) parts.push(short ? `${(((v - q.ltp) / v) * 100).toFixed(2)}% below VWAP ${v.toFixed(2)}` : `${(((q.ltp - v) / v) * 100).toFixed(2)}% above VWAP ${v.toFixed(2)}`);
   if (done.length >= 22) {
     const closes = done.map((c) => c.c);
     const n = closes.length - 1;
-    parts.push(`EMA9 ${ema(closes, 9)[n].toFixed(2)} above EMA21 ${ema(closes, 21)[n].toFixed(2)}`);
+    parts.push(`EMA9 ${ema(closes, 9)[n].toFixed(2)} ${short ? 'below' : 'above'} EMA21 ${ema(closes, 21)[n].toFixed(2)}`);
     const strength = rsi(closes, 14);
     if (strength !== undefined) parts.push(`RSI ${strength.toFixed(0)}`);
   }
   return parts.join(', ');
 }
 
+/**
+ * Reason the whole market is wrong for this direction, or undefined. Longs sit out a weak market (median share down
+ * more than the limit); shorts sit out a strong one (median share up more than the limit).
+ */
+export function marketBlocksSide(side: 'long' | 'short', breadth: number | undefined, r: QualityRules): string | undefined {
+  if (breadth === undefined) return undefined;
+  if (side === 'long' && breadth < r.breadthMin) return `market is weak (median share ${breadth.toFixed(2)}% today, limit ${r.breadthMin}%)`;
+  if (side === 'short' && breadth > -r.breadthMin) return `market is strong (median share +${breadth.toFixed(2)}% today, shorts need it below +${(-r.breadthMin).toFixed(2)}%)`;
+  return undefined;
+}
+
 /** Returns a plain-words reason to SKIP this signal, or undefined when it looks like a good entry. */
 export function qualityReject(q: Quote, candles: Candle[], s: Signal, r: QualityRules): string | undefined {
   if (!r.enabled) return undefined;
+  const short = s.side === 'short';
   const mins = istMinutes(q.ts);
   if (mins < MARKET_OPEN + r.firstEntryMin) return `first ${r.firstEntryMin} minutes are too jumpy`;
   if (mins > r.lastEntryMinutes) return 'too late in the day for a new entry';
@@ -80,18 +93,33 @@ export function qualityReject(q: Quote, candles: Candle[], s: Signal, r: Quality
   const today = done.filter((c) => istDate(c.t) === day);
   const v = vwap(today);
   if (v !== undefined) {
-    if (q.ltp < v) return "price is below today's average price (VWAP)";
-    if (q.ltp > v * 1.012) return 'price is stretched more than 1.2% above VWAP (chasing)';
+    if (short) {
+      if (q.ltp > v) return "price is above today's average price (VWAP): not a short";
+      if (q.ltp < v * 0.988) return 'price is stretched more than 1.2% below VWAP (chasing the fall)';
+    } else {
+      if (q.ltp < v) return "price is below today's average price (VWAP)";
+      if (q.ltp > v * 1.012) return 'price is stretched more than 1.2% above VWAP (chasing)';
+    }
   }
 
   if (done.length >= 22) {
     const closes = done.map((c) => c.c);
     const n = closes.length - 1;
-    if (!(ema(closes, 9)[n] > ema(closes, 21)[n])) return 'short-term trend is not up (EMA9 below EMA21)';
+    const e9 = ema(closes, 9)[n];
+    const e21 = ema(closes, 21)[n];
     const strength = rsi(closes, 14);
-    if (strength !== undefined) {
-      if (strength < 50) return `momentum is weak (RSI ${strength.toFixed(0)})`;
-      if (strength > 76) return `already overbought (RSI ${strength.toFixed(0)})`;
+    if (short) {
+      if (!(e9 < e21)) return 'short-term trend is not down (EMA9 above EMA21)';
+      if (strength !== undefined) {
+        if (strength > 50) return `momentum is not weak (RSI ${strength.toFixed(0)})`;
+        if (strength < 24) return `already oversold (RSI ${strength.toFixed(0)})`;
+      }
+    } else {
+      if (!(e9 > e21)) return 'short-term trend is not up (EMA9 below EMA21)';
+      if (strength !== undefined) {
+        if (strength < 50) return `momentum is weak (RSI ${strength.toFixed(0)})`;
+        if (strength > 76) return `already overbought (RSI ${strength.toFixed(0)})`;
+      }
     }
   }
   return undefined;

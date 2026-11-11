@@ -2,6 +2,10 @@ export interface Mover { symbol: string; ltp: number; changePct: number; volume:
 export interface Position {
   symbol: string; mode: string; qty: number; entry: number; stop: number; highest: number;
   pattern: string; reason: string; ltp: number; pnl: number; estimated: boolean; target?: number;
+  /** 'short' = sold first, to be bought back. Missing means long */
+  side?: 'long' | 'short';
+  /** What closing now would cost in charges. pnl is before charges, like a broker's screen */
+  charges?: number;
 }
 export interface PendingOrder { id: string; symbol: string; qty: number; limitPrice: number; stopPrice?: number; stopPct?: number; targetPrice?: number; mode: string }
 export interface Quote { symbol: string; ltp: number; prevClose: number; open: number; high: number; low: number; volume: number; ts: number }
@@ -11,7 +15,14 @@ export interface Status {
   haltedReason?: string;
   realAllowed: boolean;
   realizedToday: number;
+  /** Open profit or loss before charges (like a broker) */
   unrealized: number;
+  /** Open profit or loss after the charges of closing now (what the loss cap counts) */
+  unrealizedNet?: number;
+  /** Short selling is switched on in Settings */
+  allowShort?: boolean;
+  /** ...and possible right now (paper mode only) */
+  canShort?: boolean;
   freeCash: number;
   positions: Position[];
   pending?: PendingOrder[];
@@ -24,6 +35,7 @@ export interface Status {
 export interface Trade {
   id: number; day: string; mode: string; symbol: string; qty: number; entry_price: number; exit_price: number;
   entry_ts: number; exit_ts: number; pattern: string; entry_reason: string; exit_reason: string; charges: number; net_pnl: number;
+  side?: 'long' | 'short';
 }
 export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
 export interface EventRow { id: number; ts: number; level: string; message: string }
@@ -48,10 +60,11 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 export const rupee = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; slippagePct: number; targetPct: number; stopLossPct: number }
+export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; targetPct: number; stopLossPct: number }
 export interface AppSettings {
   lists: Record<'large' | 'mid' | 'small', ListRules>;
   dailyLossCap: number;
+  shortSelling: boolean;
   paperCash: number;
   capitalPerTrade: number;
   entriesPerMinute: number;

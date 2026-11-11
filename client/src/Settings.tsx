@@ -73,8 +73,6 @@ export default function Settings() {
             value={s.lists[cap].riskPerTrade} onChange={(n) => setList(cap, { riskPerTrade: n })} />
           <Field label="Max open positions" hint="How many shares can be held at the same time"
             value={s.lists[cap].maxOpenPositions} onChange={(n) => setList(cap, { maxOpenPositions: n })} />
-          <Field label="Paper slippage (%)" hint="Makes paper fills a bit worse, like real life. Small caps slip more" step={0.05}
-            value={s.lists[cap].slippagePct} onChange={(n) => setList(cap, { slippagePct: n })} />
           <Field label="Profit target (%)" hint="Sell when the share gains this much (minimum 0.75)" step={0.25}
             value={s.lists[cap].targetPct} onChange={(n) => setList(cap, { targetPct: n })} />
           <Field label="Widest stop loss (%)" hint="Entries whose natural stop is wider than this are skipped" step={0.1}
@@ -88,6 +86,7 @@ export default function Settings() {
           value={s.capitalPerTrade} onChange={(n) => setS({ ...s, capitalPerTrade: n })} />
         <Field label="Most new trades per minute" hint="Stops a burst of entries on the same market move. The best scores go first, the rest wait for the next minute"
           value={s.entriesPerMinute} onChange={(n) => setS({ ...s, entriesPerMinute: n })} />
+        <Toggle label="Allow short selling (intraday)" hint="Sell first, buy back later, to make money when a share falls. Paper mode only: it is not tried with real Upstox orders yet. Off by default. The auto trader then also takes bearish entries, and the order ticket gets a Short button" value={s.shortSelling} onChange={(b) => setS({ ...s, shortSelling: b })} />
         <Field label="Paper cash (₹)" hint={`Pretend money for paper trading (now ${rupee(s.paperCash)}). Real mode uses CAPITAL from the server .env`} step={1000}
           value={s.paperCash} onChange={(n) => setS({ ...s, paperCash: n })} />
         <Field label="Daily loss cap (₹)" hint={`Sell everything and stop for the day at this loss (now ${rupee(s.dailyLossCap)})`}

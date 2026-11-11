@@ -196,6 +196,7 @@ export class ScannerService {
     if (!s.enabled || !s.exitHelp) return { enabled: false, items: [] };
     const items = [];
     for (const p of this.d.trader.positions.values()) {
+      if (p.side === 'short') continue; // the advice below is written for longs; shorts are watched by their own stop and target
       const q = this.d.store.quote(p.symbol);
       if (!q) continue;
       const alerts = exitAdvice(p, q, this.d.store.candlesFor(p.symbol), s, this.d.squareOffTime());

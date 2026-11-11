@@ -39,7 +39,8 @@ export async function buildPicks(deps: {
     if (q.prevClose <= 0) continue;
     const changePct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
     const candles = deps.store.candlesFor(q.symbol);
-    const fired = deps.patterns.map((p) => p.check(q, candles)).filter((s): s is NonNullable<typeof s> => !!s);
+    // The Picks tab is a list of BUY ideas: short entries are left to the trader.
+    const fired = deps.patterns.map((p) => p.check(q, candles)).filter((s): s is NonNullable<typeof s> => !!s && s.side !== 'short');
     const rejects = deps.quality ? fired.map((s) => qualityReject(q, candles, s, deps.quality!)) : [];
     if (rejects.length && rejects.every((r) => r !== undefined)) rejectedWhy.set(q.symbol, rejects[0]!);
     const signals = fired

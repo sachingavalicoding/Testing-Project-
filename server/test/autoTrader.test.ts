@@ -3,7 +3,7 @@ import { PaperBroker } from '../src/broker/paperBroker.ts';
 import type { Broker } from '../src/broker/broker.ts';
 import { Db } from '../src/db/db.ts';
 import { MarketStore } from '../src/market/store.ts';
-import { AutoTrader, REAL_CONFIRM_TEXT } from '../src/trading/autoTrader.ts';
+import { AutoTrader, REAL_CONFIRM_TEXT, slipNote } from '../src/trading/autoTrader.ts';
 import type { Pattern } from '../src/trading/patterns.ts';
 import type { Quote } from '../src/types.ts';
 
@@ -104,16 +104,22 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.size).toBe(1);
   });
 
-  it('writes the market price and the slippage into the BUY and SELL log lines', async () => {
-    const slippy = new AutoTrader({ rules, db, store, paperBroker: new PaperBroker((s) => store.quote(s)?.ltp, undefined, 5, () => 0.5), realAllowed: false, patterns: [alwaysGo], ignoreMarketHours: true });
-    trader = slippy;
+  it('buys at exactly the market price in paper mode, and open profit is shown before charges', async () => {
     trader.start();
     await push(quote('GOOD', 1000));
-    const buy = db.recentEvents(20).find((e) => /^BUY \d+ GOOD/.test(e.message))!.message;
-    expect(buy).toMatch(/@ 1005 \(market 1000, filled 1005: 0.50% above the market price\)/); // the test broker slips 0.5%
-    await trader.killAll();
-    const sell = db.recentEvents(20).find((e) => /^SELL \d+ GOOD/.test(e.message))!.message;
-    expect(sell).toMatch(/below the market price/);
+    const p = trader.positions.get('GOOD')!;
+    expect(p.entry).toBe(1000); // not 1005: no made-up slippage
+    expect(trader.status().positions[0].pnl).toBe(0); // brokers show open P&L before charges, so a fresh position is not red
+    await push(quote('GOOD', 1004));
+    expect(trader.status().positions[0].pnl).toBe((1004 - 1000) * p.qty);
+    expect(trader.status().unrealized).toBe((1004 - 1000) * p.qty);
+    expect(trader.status().positions[0].charges).toBeGreaterThan(0); // estimated charges are shown on their own
+    expect(trader.unrealized()).toBeLessThan(trader.status().unrealized); // the loss cap still counts charges
+  });
+
+  it('describes a real-mode fill that differs from the market price', () => {
+    expect(slipNote(3518.1, 3528.7)).toBe(' (market 3518.1, filled 3528.7: 0.30% above the market price)');
+    expect(slipNote(1000, 1000)).toBe('');
   });
 
   describe('open positions across a restart', () => {

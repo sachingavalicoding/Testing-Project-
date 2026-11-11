@@ -17,6 +17,8 @@ export interface TradeRow {
   exit_reason: string;
   charges: number;
   net_pnl: number;
+  /** 'short' = sold first and bought back. Missing means long */
+  side?: 'long' | 'short';
 }
 
 export interface ScannerPickRow {
@@ -70,6 +72,8 @@ export class Db {
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL
       );
     `);
+    const cols = this.db.prepare('PRAGMA table_info(trades)').all() as unknown as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'side')) this.db.exec("ALTER TABLE trades ADD COLUMN side TEXT NOT NULL DEFAULT 'long'");
   }
 
   getSetting(key: string): string | undefined {
@@ -84,10 +88,10 @@ export class Db {
   addTrade(t: TradeRow): void {
     this.db
       .prepare(
-        `INSERT INTO trades (day, mode, symbol, qty, entry_price, exit_price, entry_ts, exit_ts, pattern, entry_reason, exit_reason, charges, net_pnl)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO trades (day, mode, symbol, qty, entry_price, exit_price, entry_ts, exit_ts, pattern, entry_reason, exit_reason, charges, net_pnl, side)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(t.day, t.mode, t.symbol, t.qty, t.entry_price, t.exit_price, t.entry_ts, t.exit_ts, t.pattern, t.entry_reason, t.exit_reason, t.charges, t.net_pnl);
+      .run(t.day, t.mode, t.symbol, t.qty, t.entry_price, t.exit_price, t.entry_ts, t.exit_ts, t.pattern, t.entry_reason, t.exit_reason, t.charges, t.net_pnl, t.side ?? 'long');
   }
 
   tradesForDay(day: string): TradeRow[] {

@@ -115,12 +115,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return err ? reply.code(400).send(fail(err)) : { ok: true };
   });
 
-  /** Manual buy. Sell = close the position (shares only). */
-  app.post<{ Body: Partial<ManualBuyRequest> & { side?: string } }>('/api/orders', async (req, reply) => {
+  /** Manual order. BUY opens a long, SELL opens a short (paper only, needs short selling on). To close a position use its close route. */
+  app.post<{ Body: Omit<Partial<ManualBuyRequest>, 'side'> & { side?: string } }>('/api/orders', async (req, reply) => {
     const b = req.body ?? {};
     const symbol = String(b.symbol ?? '').toUpperCase();
     if (!SYMBOL.test(symbol)) return reply.code(400).send(fail('Bad share name'));
-    if (b.side !== undefined && b.side !== 'BUY') return reply.code(400).send(fail('Only buying is placed here. To sell, close the position.'));
+    // BUY opens a long. SELL opens a short (sell first, buy back later, paper only). To close a position use its close button.
+    if (b.side !== undefined && b.side !== 'BUY' && b.side !== 'SELL') return reply.code(400).send(fail('Side must be BUY or SELL'));
     if (b.type !== 'market' && b.type !== 'limit') return reply.code(400).send(fail('Order type must be market or limit'));
     const nums = { qty: b.qty, limitPrice: b.limitPrice, stopPrice: b.stopPrice, stopPct: b.stopPct, targetPrice: b.targetPrice };
     for (const [k, v] of Object.entries(nums)) {
@@ -132,6 +133,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const r = await trader.manualBuy({
         symbol, qty: b.qty as number, type: b.type, limitPrice: b.limitPrice,
         stopPrice: b.stopPrice, stopPct: b.stopPct, targetPrice: b.targetPrice,
+        side: b.side === 'SELL' ? 'short' : 'long',
       });
       return { ok: true, ...r };
     } catch (e) {

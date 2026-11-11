@@ -47,7 +47,6 @@ const paperBroker = new PaperBroker(
   // Use real Upstox MIS margin for paper sizing too, whenever logged in.
   upstox && realBroker ? (s, q, p) => (upstox.hasToken ? realBroker.getMargin(s, q, p) : Promise.reject(new Error('no token'))) : undefined,
   5,
-  () => settings.lists[universe].slippagePct,
 );
 
 const news = new NewsService();
@@ -61,9 +60,16 @@ const trader = new AutoTrader({
   realAllowed: config.realTradingEnabled,
   patterns: PATTERNS,
   ignoreMarketHours: feed.name === 'mock',
-  newsCheck: async (symbol) => {
+  newsCheck: async (symbol, side) => {
     const n = await news.get(symbol);
-    return n ? shouldBlock(n) : undefined; // news down: do not stop trading
+    if (!n) return undefined; // news down: do not stop trading
+    // A short is hurt by good news, a long by bad news. Results / board meetings are a risk both ways.
+    if (side === 'short') {
+      if (n.resultsSoon) return 'results / board meeting news in the last 2 days';
+      if (n.score >= 2) return `good news (score ${n.score}): ${n.items[0]?.title ?? ''}`;
+      return undefined;
+    }
+    return shouldBlock(n);
   },
 });
 
@@ -77,6 +83,7 @@ const applySettings = () => {
     dailyLossCap: settings.dailyLossCap,
   });
   trader.paperCash = settings.paperCash;
+  trader.allowShort = settings.shortSelling;
   trader.capitalPerTrade = settings.capitalPerTrade;
   trader.entriesPerMinute = settings.entriesPerMinute;
   trader.filters.requireAboveVwap = settings.requireAboveVwap;

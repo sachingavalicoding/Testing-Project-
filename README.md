@@ -7,7 +7,8 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
 
 ## What works now
 - **Trade screen (TradingView style)**: watchlist of the chosen list (sort A–Z / gainers / losers) with a search box for **any** share, a candle chart (1m, 5m, 15m, 1h, Daily) with EMA 9, EMA 21, VWAP and volume you can switch on and off, your buy / stop / target lines on the chart, an order ticket, and Positions / Waiting orders / Today / Log tabs. Works on phone and laptop.
-- **Manual buy and sell of any share** next to auto trading: market or limit buy, stop-loss (default 1%), optional target, one tap Sell. Paper by default; real orders only after the real-money lock is opened. Manual trades obey the same free-cash check, daily loss cap, kill-all and 15:15 square-off. Shares only, no short selling.
+- **Manual buy and sell of any share** next to auto trading: market or limit buy, stop-loss (default 1%), optional target, one tap Sell. Paper by default; real orders only after the real-money lock is opened. Manual trades obey the same free-cash check, daily loss cap, kill-all and 15:15 square-off.
+- **Intraday short selling** (off by default, paper mode only): switch it on in Settings. Then the order ticket gets a **Short** button (sell first, buy back later, market order, stop above and target below) and the auto trader also takes bearish entries: opening range breakdown, VWAP/EMA rejection, tight range breakdown, EMA 9/21 cross down and momentum breakdown. A short has its own profit ladder (the stop comes down as price falls), the same quality checks mirrored (below VWAP, EMA9 under EMA21, RSI 24 to 50, not chasing the fall, market not strong), a news check that skips shorts on good news, and a Cover button. Real-money shorts are blocked until they are tried with real Upstox orders.
 - Pick the share list in the app: **Large (Nifty 100), Mid (Midcap 100) or Small (Smallcap 100)**. Always one list of 100 at a time, saved across restarts. Switching needs no open positions and stops auto trading. Mid and small caps swing more, so start with paper.
 - Live prices for the chosen 100 shares, updated every second (one Upstox quote call for all 100).
 - Top gainers / losers table.
@@ -26,10 +27,10 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
 - 1-minute entry check: skips shares that already moved more than the day-move limit (3% Large, 6% Mid, 12% Small; change in `.env`); one entry per share per day.
 - **Daily loss cap** (counts open losses too) and a **KILL ALL** button. Both sell everything and stop for the day.
 - Auto square-off at `SQUARE_OFF_TIME` (15:15 IST).
-- **Settings page** in the app: per share list (Large / Mid / Small) the day-move limit, risk per trade, max open positions and paper slippage, plus daily loss cap. Saved in the database; `.env` values are only the first defaults.
+- **Settings page** in the app: per share list (Large / Mid / Small) the day-move limit, risk per trade, max open positions, profit target and widest stop, plus daily loss cap. Saved in the database; `.env` values are only the first defaults.
 - **Picks tab**: today's ideas from the chosen list (pattern fired now, or a big mover to watch) with a Buy idea / Watch / Avoid label, the reason, and news headlines (Google News, free, no key). The auto trader uses the same checks.
 - **Safety filters** (switch on/off in Settings): buy only above today's VWAP; skip shares with bad news or results / board meeting in the last 2 days. If the news service is down, trading carries on.
-- **Honest paper results**: paper fills slip against you (buy higher, sell lower) by the per-list slippage %.
+- **Paper fills at the market price**: a paper buy or sell fills at the last traded price, like a normal broker, with no made-up slippage. Open profit and loss is shown before charges (as brokers do); charges are taken off when the trade closes.
 - Daily report: every trade with *why it bought* and *why it sold*, plus charges.
 - Paper / real switch and start / stop button. After a restart trading is always **stopped**.
 - Phone-installable web app (PWA).
@@ -42,7 +43,7 @@ Switch it on in Settings, under "Best trades scanner". Real prices only; when th
 - **Exit help** (own switch): move the stop to cost and sell half at 1R, trail the rest, and warnings for a VWAP break, volume drying up, a reversal candle, and a square-off warning. It is advice only and places no orders.
 - **Blocks**: choppy (flat) market, the first minutes after the open, shares near bad news or results, after your daily loss cap, and no averaging down. Each is a switch.
 - **Learns from you**: every pick shown is saved. Your own paper trades from the plan button are matched to them, and results are shown by setup and by time of day. With "Learn from my results" on, a setup that keeps losing is turned off.
-- Every limit and time is a setting. The scanner is **long only** (the app has no short selling) and the market reading uses the share list as a stand-in for Nifty.
+- Every limit and time is a setting. The scanner is **long only** (shorts are handled by the trader and the order ticket, not the scanner) and the market reading uses the share list as a stand-in for Nifty.
 
 ## Real money lock (3 locks)
 1. `.env` must have `REAL_TRADING_ENABLED=true` (default `false`). While false the server cannot place a real order.

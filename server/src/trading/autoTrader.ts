@@ -3,14 +3,14 @@ import type { Db } from '../db/db.ts';
 import type { MarketStore } from '../market/store.ts';
 import { istDate, istMinutes, MARKET_OPEN, parseHHMM } from '../market/time.ts';
 import type { Mode, Quote } from '../types.ts';
-import { netPnl, roundTripCharges } from './charges.ts';
 import type { Pattern, Signal } from './patterns.ts';
 import { positionSize } from './sizing.ts';
 import { vwap } from './indicators.ts';
 import { randomUUID } from 'node:crypto';
 import { roundToTick } from './ticks.ts';
-import { initialStop, ladderStop, type LadderRule } from './stops.ts';
-import { defaultQuality, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
+import { initialStop, initialStopShort, ladderStop, ladderStopShort, type LadderRule } from './stops.ts';
+import { chargesFor, grossPnl, netPnlFor, sideOf, type Side } from './pnl.ts';
+import { defaultQuality, marketBlocksSide, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
 
 export interface Position {
   symbol: string;
@@ -19,6 +19,7 @@ export interface Position {
   entry: number;
   entryTs: number;
   stop: number;
+  /** Best price since the entry: the highest for a long, the lowest for a short. The profit ladder follows it. */
   highest: number;
   marginUsed: number;
   pattern: string;
@@ -30,6 +31,8 @@ export interface Position {
   target?: number;
   /** The stop the position started with: 1R (the planned risk) is the distance from the entry to it */
   stop0?: number;
+  /** 'short' = sold first, to be bought back later (intraday). Missing means long (older saved positions). */
+  side?: Side;
 }
 
 /** ' (market 3518.1, filled 3528.7: 0.30% slippage)' when the fill differs from the market price, so a fill is never a mystery. */
@@ -49,6 +52,8 @@ export interface ManualBuyRequest {
   stopPct?: number;
   /** Optional profit target price */
   targetPrice?: number;
+  /** 'short' sells first (market only, paper only). Missing means a normal buy. */
+  side?: Side;
 }
 
 export interface PendingOrder {
@@ -85,8 +90,8 @@ export interface AutoTraderDeps {
   /** Mock feed runs any time of day; real market hours otherwise. */
   ignoreMarketHours?: boolean;
   now?: () => number;
-  /** Returns a reason to skip this share (bad news, results due), or undefined to go ahead. */
-  newsCheck?: (symbol: string) => Promise<string | undefined>;
+  /** Returns a reason to skip this share (bad news for a long, good news for a short, results due), or undefined to go ahead. */
+  newsCheck?: (symbol: string, side: Side) => Promise<string | undefined>;
 }
 
 export const REAL_CONFIRM_TEXT = 'I UNDERSTAND THIS USES REAL MONEY';
@@ -173,6 +178,14 @@ export class AutoTrader {
 
   filters = { requireAboveVwap: true, newsFilter: true };
 
+  /** Short selling (sell first, buy back later) is off until switched on in Settings. */
+  allowShort = false;
+
+  /** Shorts are only ever placed in paper mode: they have not been tried with real Upstox orders yet. */
+  get canShort(): boolean {
+    return this.allowShort && this.mode === 'paper';
+  }
+
   /** Entry quality checks and the automatic profit target (set from the settings page). */
   quality: QualityRules = { ...defaultQuality };
 
@@ -233,7 +246,9 @@ export class AutoTrader {
   /** Buy a share you picked. Market buys now; a limit below the price waits for the dip. */
   async manualBuy(req: ManualBuyRequest): Promise<{ status: 'filled' | 'pending'; symbol: string; orderId?: string }> {
     return this.withLock(async () => {
+      const side: Side = req.side ?? 'long';
       this.checkManualAllowed(req.symbol);
+      if (side === 'short') this.checkShortAllowed(req.type);
       if (!Number.isInteger(req.qty) || req.qty < 1 || req.qty > 1_000_000) throw new Error('Quantity must be a whole number, 1 or more');
       const q = this.d.store.quote(req.symbol);
       if (!q) throw new Error(`No live price for ${req.symbol} yet. Wait a few seconds and try again.`);
@@ -243,7 +258,7 @@ export class AutoTrader {
         if (!(req.limitPrice && req.limitPrice > 0)) throw new Error('Enter a limit price');
         ref = roundToTick(req.limitPrice);
       }
-      this.checkStopTarget(ref, req.stopPrice, req.stopPct, req.targetPrice);
+      this.checkStopTarget(ref, req.stopPrice, req.stopPct, req.targetPrice, side);
       if (req.type === 'limit' && ref < q.ltp) {
         const order: PendingOrder = {
           id: randomUUID(), symbol: req.symbol, qty: req.qty, limitPrice: ref, stopPrice: req.stopPrice,
@@ -253,17 +268,17 @@ export class AutoTrader {
         this.d.db.log('info', `Waiting buy order: ${req.qty} ${req.symbol} at ₹${ref} or lower [${this.mode}]`);
         return { status: 'pending' as const, symbol: req.symbol, orderId: order.id };
       }
-      const pos = await this.openManual(q, req.qty, req.stopPrice, req.stopPct, req.targetPrice);
+      const pos = await this.openManual(q, req.qty, req.stopPrice, req.stopPct, req.targetPrice, side);
       return { status: 'filled' as const, symbol: req.symbol, orderId: pos.orderId };
     });
   }
 
-  /** Sell (close) a position you hold. Shares only, no short selling. */
+  /** Close a position you hold: sells a long, buys back a short. */
   async manualSell(symbol: string): Promise<void> {
     await this.withLock(async () => {
       const p = this.positions.get(symbol);
       if (!p) throw new Error(`You do not hold ${symbol}`);
-      await this.exit(p, 'Manual sell');
+      await this.exit(p, sideOf(p) === 'short' ? 'Manual cover (buy back)' : 'Manual sell');
     });
   }
 
@@ -281,31 +296,46 @@ export class AutoTrader {
     if (!this.inTradingWindow()) throw new Error(`Market is closed for new buys (open 09:15 to ${this.rules.squareOffTime} IST)`);
   }
 
-  private checkStopTarget(ref: number, stopPrice?: number, stopPct?: number, target?: number): void {
+  private checkShortAllowed(type: 'market' | 'limit'): void {
+    if (this.mode === 'real') throw new Error('Short selling is paper-only for now: it has not been tried with real Upstox orders yet');
+    if (!this.allowShort) throw new Error('Short selling is switched off. Turn it on in Settings first.');
+    if (type !== 'market') throw new Error('Short orders are market orders only');
+  }
+
+  private checkStopTarget(ref: number, stopPrice?: number, stopPct?: number, target?: number, side: Side = 'long'): void {
+    if (side === 'short') {
+      if (stopPrice !== undefined && !(stopPrice > ref)) throw new Error(`Stop must be above the short price (₹${ref})`);
+      if (stopPct !== undefined && !(stopPct > 0 && stopPct < 50)) throw new Error('Stop % must be between 0 and 50');
+      if (target !== undefined && !(target > 0 && target < ref)) throw new Error(`Target must be below the short price (₹${ref})`);
+      return;
+    }
     if (stopPrice !== undefined && !(stopPrice > 0 && stopPrice < ref)) throw new Error(`Stop must be below the buy price (₹${ref})`);
     if (stopPct !== undefined && !(stopPct > 0 && stopPct < 50)) throw new Error('Stop % must be between 0 and 50');
     if (target !== undefined && !(target > ref)) throw new Error(`Target must be above the buy price (₹${ref})`);
   }
 
-  private async openManual(q: Quote, qty: number, stopPrice?: number, stopPct?: number, target?: number): Promise<Position> {
+  private async openManual(q: Quote, qty: number, stopPrice?: number, stopPct?: number, target?: number, side: Side = 'long'): Promise<Position> {
+    const short = side === 'short';
     const broker = this.broker;
     const probe = await broker.getMargin(q.symbol, qty, q.ltp);
     const need = qty * probe.marginPerShare;
     if (need > this.freeCash) {
       throw new Error(`Needs about ₹${Math.round(need)} margin but only ₹${Math.round(this.freeCash)} is free. Lower the quantity.`);
     }
-    const stop = stopPrice !== undefined ? roundToTick(stopPrice, 'down') : roundToTick(q.ltp * (1 - (stopPct ?? 1) / 100), 'down');
-    const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: 'Manual buy' });
+    const stop = short
+      ? stopPrice !== undefined ? roundToTick(stopPrice, 'up') : roundToTick(q.ltp * (1 + (stopPct ?? 1) / 100), 'up')
+      : stopPrice !== undefined ? roundToTick(stopPrice, 'down') : roundToTick(q.ltp * (1 - (stopPct ?? 1) / 100), 'down');
+    const res = await broker.placeOrder({ symbol: q.symbol, side: short ? 'SELL' : 'BUY', qty, reason: short ? 'Manual short' : 'Manual buy' });
     if (res.status === 'rejected') throw new Error(`Broker rejected the order: ${res.message ?? 'unknown reason'}`);
     const entry = res.avgPrice ?? q.ltp;
     const pos: Position = {
       symbol: q.symbol, mode: this.mode, qty, entry, entryTs: this.now(), stop, highest: entry,
-      marginUsed: need, pattern: 'manual', reason: 'Manual buy', orderId: res.orderId,
-      estimated: res.status !== 'filled', target, stop0: stop,
+      marginUsed: need, pattern: 'manual', reason: short ? 'Manual short' : 'Manual buy', orderId: res.orderId,
+      estimated: res.status !== 'filled', target, stop0: stop, side,
     };
     this.positions.set(q.symbol, pos);
     this.persist(pos);
-    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
+    this.d.db.log('info', `${short ? 'MANUAL SHORT' : 'MANUAL BUY'} ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
     return pos;
   }
 
@@ -346,11 +376,22 @@ export class AutoTrader {
     return this.capital + Math.min(0, this.realizedToday) - used;
   }
 
+  /** Open profit or loss AFTER the charges it would cost to close now. The daily loss cap uses this (the careful number). */
   unrealized(): number {
     let sum = 0;
     for (const p of this.positions.values()) {
       const ltp = this.d.store.quote(p.symbol)?.ltp ?? p.entry;
-      sum += netPnl(p.entry, ltp, p.qty);
+      sum += netPnlFor(sideOf(p), p.entry, ltp, p.qty);
+    }
+    return Math.round(sum * 100) / 100;
+  }
+
+  /** Open profit or loss before charges: the number brokers show for open positions. Charges are taken when the trade closes. */
+  unrealizedGross(): number {
+    let sum = 0;
+    for (const p of this.positions.values()) {
+      const ltp = this.d.store.quote(p.symbol)?.ltp ?? p.entry;
+      sum += grossPnl(sideOf(p), p.entry, ltp, p.qty);
     }
     return Math.round(sum * 100) / 100;
   }
@@ -362,15 +403,26 @@ export class AutoTrader {
       haltedReason: this.haltedReason,
       realAllowed: this.d.realAllowed && !!this.d.realBroker,
       realizedToday: Math.round(this.realizedToday * 100) / 100,
-      unrealized: this.unrealized(),
+      unrealized: this.unrealizedGross(),
+      unrealizedNet: this.unrealized(),
+      allowShort: this.allowShort,
+      canShort: this.canShort,
       freeCash: Math.round(this.freeCash),
       rules: { ...this.rules, capital: this.capital },
       pending: [...this.pending.values()],
-      positions: [...this.positions.values()].map((p) => ({
-        ...p,
-        ltp: this.d.store.quote(p.symbol)?.ltp ?? p.entry,
-        pnl: netPnl(p.entry, this.d.store.quote(p.symbol)?.ltp ?? p.entry, p.qty),
-      })),
+      positions: [...this.positions.values()].map((p) => {
+        const ltp = this.d.store.quote(p.symbol)?.ltp ?? p.entry;
+        const side = sideOf(p);
+        return {
+          ...p,
+          side,
+          ltp,
+          /** Before charges, like a broker's screen */
+          pnl: grossPnl(side, p.entry, ltp, p.qty),
+          /** What closing now would cost in charges */
+          charges: chargesFor(side, p.entry, ltp, p.qty),
+        };
+      }),
     };
   }
 
@@ -417,6 +469,21 @@ export class AutoTrader {
     for (const p of [...this.positions.values()]) {
       const q = byS.get(p.symbol);
       if (!q) continue;
+      if (sideOf(p) === 'short') {
+        // A short profits when price falls: the stop is ABOVE the entry and follows the lowest price down.
+        if (q.ltp < p.highest) {
+          p.highest = q.ltp;
+          const next = ladderStopShort(p.entry, p.qty, p.highest, p.stop, this.d.ladder ?? { stepPct: 0.5 });
+          if (next < p.stop) {
+            this.d.db.log('info', `${p.symbol} (short) stop moved down ${p.stop} → ${next}`);
+            p.stop = next;
+            this.persist(p);
+          }
+        }
+        if (q.ltp >= p.stop) await this.exit(p, `Stop hit at ${q.ltp} (stop ${p.stop})`);
+        else if (p.target && q.ltp <= p.target) await this.exit(p, `Target hit at ${q.ltp} (target ${p.target})`);
+        continue;
+      }
       if (q.ltp > p.highest) {
         p.highest = q.ltp;
         const next = ladderStop(p.entry, p.qty, p.highest, p.stop, this.d.ladder ?? { stepPct: 0.5 });
@@ -438,13 +505,18 @@ export class AutoTrader {
   private async lookForEntries(quotes: Quote[]): Promise<void> {
     if (!this.inTradingWindow()) return;
     if (this.positions.size >= this.rules.maxOpenPositions) return;
+    // A weak market (most shares down) makes long entries fail more often, a strong one makes shorts fail: each side sits out its bad market.
+    const breadth = this.quality.enabled ? marketBreadthPct(quotes) : undefined;
+    const marketBlock: Record<Side, string | undefined> = {
+      long: marketBlocksSide('long', breadth, this.quality),
+      short: marketBlocksSide('short', breadth, this.quality),
+    };
     if (this.quality.enabled) {
-      // A weak market (most shares down) makes long entries fail more often: sit out.
-      const breadth = marketBreadthPct(quotes);
-      if (breadth !== undefined && breadth < this.quality.breadthMin) {
+      const blocked = marketBlock.long ?? (this.canShort ? marketBlock.short : undefined);
+      if (marketBlock.long && (!this.canShort || marketBlock.short)) {
         if (!this.weakMarketLogged) {
           this.weakMarketLogged = true;
-          this.d.db.log('info', `SKIP all entries: market is weak (median share ${breadth.toFixed(2)}% today, limit ${this.quality.breadthMin}%)`);
+          this.d.db.log('info', `SKIP all entries: ${blocked}`);
         }
         return;
       }
@@ -458,6 +530,12 @@ export class AutoTrader {
       for (const p of this.d.patterns) {
         const s = p.check(q, candles);
         if (!s) continue;
+        const side: Side = s.side ?? 'long';
+        if (side === 'short' && !this.canShort) continue; // short selling is off (or this is real mode): leave it alone
+        if (marketBlock[side]) {
+          this.logSkip(q.symbol, s.pattern, marketBlock[side]!);
+          continue;
+        }
         // 1-minute entry check: skip shares that already moved too much today.
         if (dayMove > this.rules.maxDayMovePct) {
           this.logSkip(q.symbol, s.pattern, `already moved ${dayMove.toFixed(1)}% today (limit ${this.rules.maxDayMovePct}%)`);
@@ -466,8 +544,12 @@ export class AutoTrader {
         if (this.filters.requireAboveVwap) {
           const today = candles.filter((c) => istDate(c.t) === this.day);
           const v = vwap(today);
-          if (v !== undefined && q.ltp < v) {
+          if (v !== undefined && side === 'long' && q.ltp < v) {
             this.logSkip(q.symbol, s.pattern, `price ${q.ltp} is below today's average price (VWAP ${v.toFixed(2)})`);
+            continue;
+          }
+          if (v !== undefined && side === 'short' && q.ltp > v) {
+            this.logSkip(q.symbol, s.pattern, `price ${q.ltp} is above today's average price (VWAP ${v.toFixed(2)}): not a short`);
             continue;
           }
         }
@@ -492,7 +574,7 @@ export class AutoTrader {
         if (this.entriesThisMinute >= this.entriesPerMinute) break; // the next minute gets the rest, best score first
       }
       if (this.filters.newsFilter && this.d.newsCheck) {
-        const skip = await this.d.newsCheck(q.symbol);
+        const skip = await this.d.newsCheck(q.symbol, s.side ?? 'long');
         if (skip) {
           this.enteredToday.add(q.symbol); // do not re-check the same share every second
           this.d.db.log('info', `${q.symbol}: ${s.pattern} fired but skipped: ${skip}`);
@@ -513,6 +595,8 @@ export class AutoTrader {
   }
 
   private async enter(q: Quote, s: Signal): Promise<void> {
+    const side: Side = s.side ?? 'long';
+    const short = side === 'short';
     const broker = this.broker;
     // Ask the broker for the real MIS margin for one share first, then size.
     const probe = await broker.getMargin(q.symbol, 1, q.ltp);
@@ -530,16 +614,20 @@ export class AutoTrader {
     }
     // With a fixed capital per trade the stop stays where the chart puts it (it is limited by the list's widest stop);
     // the risk-per-trade cap would otherwise squeeze it tighter than normal price noise.
-    const stop = initialStop(q.ltp, qty, s.stopPct, this.capitalPerTrade > 0 ? Infinity : this.rules.riskPerTrade);
+    const maxLoss = this.capitalPerTrade > 0 ? Infinity : this.rules.riskPerTrade;
+    const stop = short ? initialStopShort(q.ltp, qty, s.stopPct, maxLoss) : initialStop(q.ltp, qty, s.stopPct, maxLoss);
     // Saved with the trade: the pattern's reason plus every check it passed.
     const why = this.quality.enabled ? `${s.reason}. Checks passed: ${qualitySummary(q, this.d.store.candlesFor(q.symbol), this.quality, s)}` : s.reason;
-    const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: why });
+    const res = await broker.placeOrder({ symbol: q.symbol, side: short ? 'SELL' : 'BUY', qty, reason: why });
     if (res.status === 'rejected') {
-      this.d.db.log('warn', `${q.symbol} BUY rejected: ${res.message ?? 'unknown'}`);
+      this.d.db.log('warn', `${q.symbol} ${short ? 'SHORT' : 'BUY'} rejected: ${res.message ?? 'unknown'}`);
       return;
     }
     const entry = res.avgPrice ?? q.ltp;
-    const target = this.quality.targetPct > 0 ? roundToTick(entry * (1 + this.quality.targetPct / 100), 'up') : undefined;
+    const target =
+      this.quality.targetPct > 0
+        ? short ? roundToTick(entry * (1 - this.quality.targetPct / 100), 'down') : roundToTick(entry * (1 + this.quality.targetPct / 100), 'up')
+        : undefined;
     this.enteredToday.add(q.symbol);
     if (this.entriesPerMinute > 0) this.entriesThisMinute++;
     this.positions.set(q.symbol, {
@@ -557,23 +645,26 @@ export class AutoTrader {
       estimated: res.status !== 'filled',
       target,
       stop0: stop,
+      side,
     });
     this.persist(this.positions.get(q.symbol)!);
     this.d.db.log(
       'info',
-      `BUY ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
+      `${short ? 'SHORT' : 'BUY'} ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
     );
   }
 
   private async exit(p: Position, why: string): Promise<void> {
-    const res = await this.broker.placeOrder({ symbol: p.symbol, side: 'SELL', qty: p.qty, reason: why });
+    const side = sideOf(p);
+    const verb = side === 'short' ? 'BUY' : 'SELL';
+    const res = await this.broker.placeOrder({ symbol: p.symbol, side: verb, qty: p.qty, reason: why });
     if (res.status === 'rejected') {
-      this.d.db.log('error', `${p.symbol} SELL rejected: ${res.message ?? 'unknown'}. Position still open!`);
+      this.d.db.log('error', `${p.symbol} ${verb} rejected: ${res.message ?? 'unknown'}. Position still open!`);
       return;
     }
     const exitPrice = res.avgPrice ?? this.d.store.quote(p.symbol)?.ltp ?? p.entry;
-    const charges = roundTripCharges(p.entry, exitPrice, p.qty).total;
-    const pnl = netPnl(p.entry, exitPrice, p.qty);
+    const charges = chargesFor(side, p.entry, exitPrice, p.qty);
+    const pnl = netPnlFor(side, p.entry, exitPrice, p.qty);
     this.positions.delete(p.symbol);
     this.d.db.deleteOpenPosition(p.symbol);
     this.realizedToday += pnl;
@@ -591,7 +682,8 @@ export class AutoTrader {
       exit_reason: why,
       charges,
       net_pnl: pnl,
+      side,
     });
-    this.d.db.log('info', `SELL ${p.qty} ${p.symbol} @ ${exitPrice}${slipNote(this.d.store.quote(p.symbol)?.ltp, exitPrice)} net ₹${pnl} — ${why}`);
+    this.d.db.log('info', `${side === 'short' ? 'COVER' : 'SELL'} ${p.qty} ${p.symbol} @ ${exitPrice}${slipNote(this.d.store.quote(p.symbol)?.ltp, exitPrice)} net ₹${pnl} — ${why}`);
   }
 }

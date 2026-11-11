@@ -10,8 +10,6 @@ export interface ListRules {
   /** Most rupees you accept to lose on one trade (incl. charges) */
   riskPerTrade: number;
   maxOpenPositions: number;
-  /** Paper fills are made worse by this % so paper results are honest (real fills slip too) */
-  slippagePct: number;
   /** Profit target for every auto entry, % above the buy price (minimum 0.75) */
   targetPct: number;
   /** Widest stop loss allowed, % below the buy price. A pattern whose natural stop is wider is skipped */
@@ -42,6 +40,8 @@ export interface AppSettings {
   qualityGate: boolean;
   /** Target must be at least this many times the stop distance */
   minRewardRisk: number;
+  /** Intraday short selling (sell first, buy back later). Paper only, off by default */
+  shortSelling: boolean;
   /** The "Best trades now" scanner (off by default) */
   scanner: ScannerSettings;
 }
@@ -50,9 +50,9 @@ export function defaultSettings(c: Config): AppSettings {
   const m = c.money;
   return {
     lists: {
-      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.05, ...LIST_TARGETS.large },
-      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.1, ...LIST_TARGETS.mid },
-      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.3, ...LIST_TARGETS.small },
+      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.large },
+      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.mid },
+      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.small },
     },
     dailyLossCap: m.dailyLossCap,
     paperCash: m.capital,
@@ -62,6 +62,7 @@ export function defaultSettings(c: Config): AppSettings {
     newsFilter: true,
     qualityGate: true,
     minRewardRisk: 1.5,
+    shortSelling: false,
     scanner: { ...defaultScanner, riskPerTrade: m.riskPerTrade },
   };
 }
@@ -87,7 +88,6 @@ export function validateSettings(input: unknown): AppSettings {
       maxDayMovePct: inRange(`${id}: day-move limit %`, r.maxDayMovePct, 0.5, 30),
       riskPerTrade: inRange(`${id}: risk per trade`, r.riskPerTrade, 10, 100_000),
       maxOpenPositions: inRange(`${id}: max open positions`, r.maxOpenPositions, 1, 20, true),
-      slippagePct: inRange(`${id}: paper slippage %`, r.slippagePct, 0, 2),
       // Older saved settings do not have these: use the starting values for that list.
       targetPct: r.targetPct === undefined ? LIST_TARGETS[id].targetPct : inRange(`${id}: profit target %`, r.targetPct, 0.75, 10),
       stopLossPct: r.stopLossPct === undefined ? LIST_TARGETS[id].stopLossPct : inRange(`${id}: stop loss %`, r.stopLossPct, 0.2, 5),
@@ -106,6 +106,7 @@ export function validateSettings(input: unknown): AppSettings {
     // Older saved settings do not have these yet: use the defaults instead of throwing them away.
     qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
     minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
+    shortSelling: bool('short selling', s.shortSelling, false),
     scanner: validateScanner(s.scanner),
   };
 }

@@ -26,16 +26,16 @@ export default function BottomPanel({ status, onSelect }: { status?: Status; onS
       <div className="max-h-64 overflow-auto p-2 text-sm">
         {tab === 'positions' && (positions.length === 0 ? <p className="p-1 text-slate-500">No open positions.</p> : (
           <table className="num w-full">
-            <thead className="text-xs text-slate-500"><tr><td>Share</td><td className="px-1.5 text-right">Qty</td><td className="px-1.5 text-right">Buy</td><td className="px-1.5 text-right">Now</td><td className="px-1.5 text-right">Stop</td><td className="px-1.5 text-right">P&L</td><td /></tr></thead>
+            <thead className="text-xs text-slate-500"><tr><td>Share</td><td className="px-1.5 text-right">Qty</td><td className="px-1.5 text-right">In</td><td className="px-1.5 text-right">Now</td><td className="px-1.5 text-right">Stop</td><td className="px-1.5 text-right">P&L</td><td /></tr></thead>
             <tbody>
               {positions.map((p) => (
                 <tr key={p.symbol} className="cursor-pointer border-t border-slate-800" onClick={() => onSelect(p.symbol)}>
-                  <td className="py-1.5">{p.symbol} <span className="text-xs text-slate-500">{p.pattern}</span></td>
+                  <td className="py-1.5">{p.symbol} {p.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>} <span className="text-xs text-slate-500">{p.pattern}</span></td>
                   <td className="px-1.5 text-right">{p.qty}</td><td className="px-1.5 text-right">{p.entry}</td><td className="px-1.5 text-right">{p.ltp}</td>
                   <td className="px-1.5 text-right">{p.stop}</td><td className={`px-1.5 text-right ${pnlColor(p.pnl)}`}>{rupee(p.pnl)}</td>
                   <td className="pl-2 text-right">
                     <button className="rounded bg-red-800 px-2 py-0.5 text-xs"
-                      onClick={(e) => { e.stopPropagation(); if (!real || window.confirm(`REAL MONEY: sell all ${p.symbol}?`)) void act(() => post(`/api/positions/${encodeURIComponent(p.symbol)}/close`)); }}>Sell</button>
+                      onClick={(e) => { e.stopPropagation(); if (!real || window.confirm(`REAL MONEY: ${p.side === 'short' ? 'buy back' : 'sell all'} ${p.symbol}?`)) void act(() => post(`/api/positions/${encodeURIComponent(p.symbol)}/close`)); }}>{p.side === 'short' ? 'Cover' : 'Sell'}</button>
                   </td>
                 </tr>
               ))}

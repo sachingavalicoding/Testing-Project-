@@ -94,13 +94,13 @@ describe('news', () => {
   });
 });
 
-describe('paper slippage', () => {
-  it('buys higher and sells lower than the quote, on tick', async () => {
-    const b = new PaperBroker(() => 1000, undefined, 5, () => 0.3);
+describe('paper fills', () => {
+  it('fill exactly at the market price for both buys and sells, with no made-up slippage', async () => {
+    const b = new PaperBroker(() => 1000.04, undefined, 5);
     const buy = await b.placeOrder({ symbol: 'X', side: 'BUY', qty: 1, reason: '' });
     const sell = await b.placeOrder({ symbol: 'X', side: 'SELL', qty: 1, reason: '' });
-    expect(buy.avgPrice).toBe(1003);
-    expect(sell.avgPrice).toBe(997);
+    expect(buy.avgPrice).toBe(1000.05); // only rounded to the 5 paise tick
+    expect(sell.avgPrice).toBe(1000.05);
   });
 });
 
