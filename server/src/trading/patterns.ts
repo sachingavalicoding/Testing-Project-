@@ -147,12 +147,14 @@ export const vwapPullback: Pattern = {
     if (!touched) return undefined;
     const avgVol = sma(today.slice(-21, -1).map((c) => c.v), 20) ?? 0;
     const volRatio = avgVol > 0 ? last.v / avgVol : 1;
+    // A bounce on thin volume is usually just a pause before the next leg down.
+    if (volRatio < 1.2) return undefined;
     const stopLow = Math.min(...today.slice(-4).map((c) => c.l));
     return {
       pattern: this.id,
       reason: `Up ${dayPct.toFixed(1)}% and trending up; dipped to support and bounced above EMA9 ${e9[n].toFixed(2)} (VWAP ${vw?.toFixed(2) ?? '-'}), volume ${volRatio.toFixed(1)}x`,
-      stopPct: clamp((q.ltp - stopLow) / q.ltp + 0.0005, 0.003, 0.01),
-      score: 60 + Math.min(15, Math.round(dayPct * 5)) + (volRatio >= 1 ? 10 : 0),
+      stopPct: clamp((q.ltp - stopLow) / q.ltp + 0.0005, 0.004, 0.01),
+      score: 60 + Math.min(15, Math.round(dayPct * 5)) + Math.min(10, Math.round((volRatio - 1) * 10)),
     };
   },
 };
@@ -189,7 +191,7 @@ export const tightRangeBreakout: Pattern = {
     return {
       pattern: this.id,
       reason: `Rested in a ${(widthPct * 100).toFixed(2)}% range for 12 min, then closed above ${hi.toFixed(2)} on volume ${volRatio.toFixed(1)}x`,
-      stopPct: clamp((last.c - lo) / last.c + 0.0005, 0.003, 0.007),
+      stopPct: clamp((last.c - lo) / last.c + 0.0005, 0.004, 0.007),
       score: 60 + Math.min(25, Math.round(volRatio * 5)),
     };
   },

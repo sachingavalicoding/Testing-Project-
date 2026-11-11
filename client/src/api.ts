@@ -52,11 +52,39 @@ export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpe
 export interface AppSettings {
   lists: Record<'large' | 'mid' | 'small', ListRules>;
   dailyLossCap: number;
+  paperCash: number;
+  capitalPerTrade: number;
+  entriesPerMinute: number;
   requireAboveVwap: boolean;
   newsFilter: boolean;
   qualityGate: boolean;
   minRewardRisk: number;
+  scanner: ScannerSettings;
 }
+export interface ScannerSettings {
+  enabled: boolean; watchlistSize: number; minScore: number; scanFrom: string; scanTo: string; noEntryFirstMinutes: number;
+  riskPerTrade: number; atrStopMult: number; minStopPct: number; maxStopPct: number; chopMovePct: number;
+  blockChoppy: boolean; blockNearNews: boolean; blockAfterLossLimit: boolean; blockAveraging: boolean;
+  exitHelp: boolean; squareOffWarnMin: number; learn: boolean; learnMinTrades: number; learnMinWinRate: number;
+}
+export interface ScorePart { key: string; label: string; points: number; max: number; note: string }
+export interface TradePlan {
+  entryLow: number; entryHigh: number; stop: number; stopPct: number; stopHow: string; target1: number; target2: number;
+  rr1: number; rr2: number; qty: number; positionValue: number; riskAfterCharges: number; gain1AfterCharges: number; gain2AfterCharges: number;
+  atr: number; invalidIf: string[];
+}
+export interface ScannerPick { symbol: string; ltp: number; changePct: number; score: number; setup: string; setupLabel: string; parts: ScorePart[]; plan: TradePlan; reasons: string[] }
+export interface WatchItem { symbol: string; ltp: number; gapPct: number; score: number; why: string[]; liveScore?: number; setup?: string }
+export interface ScannerState {
+  enabled: boolean; phase?: string; phaseText?: string; market?: { text: string; choppy: boolean };
+  blocks?: string[]; noTrade?: boolean; noTradeWhy?: string[]; watchlist?: WatchItem[]; watchNote?: string;
+  picks?: ScannerPick[]; skipped?: { symbol: string; score: number; why: string }[]; disabledSetups?: string[];
+}
+export interface ExitAlert { level: 'info' | 'warn' | 'act'; code: string; text: string }
+export interface ExitHelp { enabled: boolean; items: { symbol: string; entry: number; ltp: number; qty: number; stop: number; alerts: ExitAlert[] }[] }
+export interface LearnRow { key: string; label: string; picks: number; taken: number; wins: number; losses: number; winRate: number; net: number; off?: boolean }
+export interface LearnStats { bySetup: LearnRow[]; byHour: LearnRow[]; off: string[] }
+
 export interface Pick {
   symbol: string; ltp: number; changePct: number; aboveVwap?: boolean;
   signals: { pattern: string; reason: string; score: number; stopPct: number }[];

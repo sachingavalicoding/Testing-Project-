@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import Terminal from './Terminal.tsx';
 import Picks from './Picks.tsx';
+import Best from './Best.tsx';
 import Settings from './Settings.tsx';
 import { get, post, rupee, type EventRow, type Mover, type Status, type Trade } from './api.ts';
 
-type Tab = 'trade' | 'auto' | 'picks' | 'movers' | 'report' | 'settings';
+type Tab = 'trade' | 'auto' | 'best' | 'picks' | 'movers' | 'report' | 'settings';
 
 interface Live { status: Status; movers: { gainers: Mover[]; losers: Mover[] } }
 
@@ -61,6 +62,7 @@ export default function App() {
 
       {tab === 'trade' && <Terminal symbol={symbol} setSymbol={setSymbol} status={s} />}
       {tab === 'auto' && s && <Home s={s} meta={meta} act={act} openChart={openChart} />}
+      {tab === 'best' && <Best onPick={openChart} real={s?.mode === 'real'} />}
       {tab === 'picks' && <Picks onPick={openChart} />}
       {tab === 'movers' && live && <Movers movers={live.movers} onPick={openChart} />}
       {tab === 'report' && <Trades />}
@@ -74,7 +76,7 @@ export default function App() {
       {!s && tab === 'auto' && <p className="text-slate-400">Connecting to server…</p>}
 
       <nav className="fixed inset-x-0 bottom-0 flex border-t border-slate-800 bg-slate-950">
-        {(['trade', 'auto', 'picks', 'movers', 'report', 'settings'] as Tab[]).map((t) => (
+        {(['trade', 'auto', 'best', 'picks', 'movers', 'report', 'settings'] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 py-3 text-xs capitalize ${tab === t ? 'text-sky-400' : 'text-slate-400'}`}>{t}</button>
         ))}

@@ -74,6 +74,36 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.has('GOOD')).toBe(false);
   });
 
+  it('uses the paper cash setting for free cash in paper mode', async () => {
+    expect(trader.freeCash).toBe(30000); // rules.capital until a paper cash is set
+    trader.paperCash = 100000;
+    expect(trader.freeCash).toBe(100000);
+    expect(trader.status().rules.capital).toBe(100000);
+    trader.start();
+    await push(quote('GOOD', 1000));
+    expect(trader.freeCash).toBeLessThan(100000); // margin for the open position is taken from the paper cash
+    expect(trader.freeCash).toBeGreaterThan(80000);
+  });
+
+  it('buys with a fixed capital per trade (20000 margin at 5x = 1 lakh) and keeps the chart stop', async () => {
+    trader.paperCash = 200000;
+    trader.capitalPerTrade = 20000;
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const p = trader.positions.get('GOOD')!;
+    expect(p.qty).toBe(100); // 100000 of shares
+    expect(p.marginUsed).toBe(20000);
+    expect(p.stop).toBeCloseTo(990, 0); // the 1% pattern stop, not squeezed by the 200 risk cap
+  });
+
+  it('opens at most the allowed number of new trades per minute', async () => {
+    trader.paperCash = 500000;
+    trader.entriesPerMinute = 1;
+    trader.start();
+    await push(quote('GOONE', 1000), quote('GOTWO', 1000), quote('GOTHREE', 1000));
+    expect(trader.positions.size).toBe(1);
+  });
+
   it('skips shares that already moved too much today', async () => {
     trader.start();
     await push(quote('GOFAST', 1050, 1000)); // +5%

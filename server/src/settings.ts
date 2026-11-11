@@ -1,5 +1,6 @@
 import type { Config } from './config.ts';
 import type { Db } from './db/db.ts';
+import { defaultScanner, type ScannerSettings } from './scanner/types.ts';
 import type { UniverseId } from './universe/index.ts';
 
 /** Limits that differ for each share list (large / mid / small cap). */
@@ -27,6 +28,12 @@ export const LIST_TARGETS: Record<UniverseId, { targetPct: number; stopLossPct: 
 export interface AppSettings {
   lists: Record<UniverseId, ListRules>;
   dailyLossCap: number;
+  /** Paper money to trade with, ₹. Only used in paper mode */
+  paperCash: number;
+  /** Your own money (margin) put into each auto trade, ₹. Upstox leverage multiplies it (about 5x). 0 = size by risk per trade */
+  capitalPerTrade: number;
+  /** Most new auto trades opened in one minute (stops a burst of entries on the same market move) */
+  entriesPerMinute: number;
   /** Buy only when price is above today's VWAP (average traded price) */
   requireAboveVwap: boolean;
   /** Skip shares with bad news or results coming */
@@ -35,6 +42,8 @@ export interface AppSettings {
   qualityGate: boolean;
   /** Target must be at least this many times the stop distance */
   minRewardRisk: number;
+  /** The "Best trades now" scanner (off by default) */
+  scanner: ScannerSettings;
 }
 
 export function defaultSettings(c: Config): AppSettings {
@@ -46,10 +55,14 @@ export function defaultSettings(c: Config): AppSettings {
       small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, slippagePct: 0.3, ...LIST_TARGETS.small },
     },
     dailyLossCap: m.dailyLossCap,
+    paperCash: m.capital,
+    capitalPerTrade: 20_000,
+    entriesPerMinute: 2,
     requireAboveVwap: true,
     newsFilter: true,
     qualityGate: true,
     minRewardRisk: 1.5,
+    scanner: { ...defaultScanner, riskPerTrade: m.riskPerTrade },
   };
 }
 
@@ -84,12 +97,62 @@ export function validateSettings(input: unknown): AppSettings {
   return {
     lists,
     dailyLossCap: inRange('daily loss cap', s.dailyLossCap, 50, 1_000_000),
+    // Older saved settings do not have this: fall back to a normal starting amount.
+    paperCash: s.paperCash === undefined ? 50_000 : inRange('paper cash', s.paperCash, 1000, 100_000_000),
+    capitalPerTrade: s.capitalPerTrade === undefined ? 20_000 : s.capitalPerTrade === 0 ? 0 : inRange('capital per trade', s.capitalPerTrade, 1000, 10_000_000),
+    entriesPerMinute: s.entriesPerMinute === undefined ? 2 : inRange('new trades per minute', s.entriesPerMinute, 1, 20, true),
     requireAboveVwap: s.requireAboveVwap,
     newsFilter: s.newsFilter,
     // Older saved settings do not have these yet: use the defaults instead of throwing them away.
     qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
     minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
+    scanner: validateScanner(s.scanner),
   };
+}
+
+const bool = (name: string, v: unknown, fallback: boolean): boolean => {
+  if (v === undefined) return fallback;
+  if (typeof v !== 'boolean') throw new Error(`${name} must be on or off`);
+  return v;
+};
+
+const hhmm = (name: string, v: unknown, fallback: string): string => {
+  if (v === undefined) return fallback;
+  if (typeof v !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) throw new Error(`${name} must be a time like 09:20`);
+  return v;
+};
+
+const num = (name: string, v: unknown, fallback: number, lo: number, hi: number, integer = false): number =>
+  v === undefined ? fallback : inRange(name, v, lo, hi, integer);
+
+/** Checks the scanner settings. Anything missing (older saved settings) takes its default. */
+export function validateScanner(input: unknown, base: ScannerSettings = defaultScanner): ScannerSettings {
+  const s = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const out: ScannerSettings = {
+    enabled: bool('scanner on/off', s.enabled, base.enabled),
+    watchlistSize: num('watchlist size', s.watchlistSize, base.watchlistSize, 3, 50, true),
+    minScore: num('minimum score', s.minScore, base.minScore, 1, 100),
+    scanFrom: hhmm('scan from', s.scanFrom, base.scanFrom),
+    scanTo: hhmm('scan to', s.scanTo, base.scanTo),
+    noEntryFirstMinutes: num('no entries in the first minutes', s.noEntryFirstMinutes, base.noEntryFirstMinutes, 0, 60, true),
+    riskPerTrade: num('scanner risk per trade', s.riskPerTrade, base.riskPerTrade, 10, 100_000),
+    atrStopMult: num('ATR stop multiple', s.atrStopMult, base.atrStopMult, 1, 3),
+    minStopPct: num('minimum stop %', s.minStopPct, base.minStopPct, 0.1, 5),
+    maxStopPct: num('widest stop %', s.maxStopPct, base.maxStopPct, 0.2, 10),
+    chopMovePct: num('flat market %', s.chopMovePct, base.chopMovePct, 0.02, 2),
+    blockChoppy: bool('block choppy market', s.blockChoppy, base.blockChoppy),
+    blockNearNews: bool('block near news', s.blockNearNews, base.blockNearNews),
+    blockAfterLossLimit: bool('block after loss limit', s.blockAfterLossLimit, base.blockAfterLossLimit),
+    blockAveraging: bool('block averaging down', s.blockAveraging, base.blockAveraging),
+    exitHelp: bool('exit help', s.exitHelp, base.exitHelp),
+    squareOffWarnMin: num('square-off warning minutes', s.squareOffWarnMin, base.squareOffWarnMin, 1, 60, true),
+    learn: bool('learning', s.learn, base.learn),
+    learnMinTrades: num('trades before judging a setup', s.learnMinTrades, base.learnMinTrades, 1, 1000, true),
+    learnMinWinRate: num('lowest win rate %', s.learnMinWinRate, base.learnMinWinRate, 0, 100),
+  };
+  if (out.minStopPct >= out.maxStopPct) throw new Error('The minimum stop % must be smaller than the widest stop %');
+  if (out.scanFrom >= out.scanTo) throw new Error('Scan from must be earlier than scan to');
+  return out;
 }
 
 const KEY = 'app_settings';

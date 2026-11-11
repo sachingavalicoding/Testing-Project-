@@ -51,9 +51,19 @@ export class MarketStore {
     }
   }
 
-  /** Seed candles (e.g. today's history from the broker at startup). */
-  seedCandles(symbol: string, candles: Candle[]): void {
-    this.candles.set(symbol, candles.slice(-this.maxCandles));
+  /**
+   * Add earlier candles (today's history from the broker) in front of the ones built from live ticks.
+   * Where both have the same minute, the history keeps its open and volume and the live tick keeps the latest close.
+   */
+  seedCandles(symbol: string, history: Candle[]): void {
+    const live = this.candles.get(symbol) ?? [];
+    const byT = new Map<number, Candle>();
+    for (const c of history) byT.set(c.t, { ...c });
+    for (const c of live) {
+      const h = byT.get(c.t);
+      byT.set(c.t, h ? { t: c.t, o: h.o, h: Math.max(h.h, c.h), l: Math.min(h.l, c.l), c: c.c, v: Math.max(h.v, c.v) } : c);
+    }
+    this.candles.set(symbol, [...byT.values()].sort((a, b) => a.t - b.t).slice(-this.maxCandles));
   }
 
   quote(symbol: string): Quote | undefined {

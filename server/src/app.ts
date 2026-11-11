@@ -16,6 +16,7 @@ import type { AppSettings } from './settings.ts';
 import type { NewsService } from './news/news.ts';
 import { buildPicks } from './picks.ts';
 import { defaultQuality } from './trading/quality.ts';
+import type { ScannerService } from './scanner/service.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 
@@ -29,6 +30,7 @@ export interface AppDeps {
   settings: { get(): AppSettings; update(input: unknown): AppSettings };
   news?: NewsService;
   patterns: Pattern[];
+  scanner?: ScannerService;
   clientDist?: string;
 }
 
@@ -175,6 +177,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       quality: { ...defaultQuality, enabled: s.qualityGate, targetPct: s.lists[deps.universe.current].targetPct, stopLossPct: s.lists[deps.universe.current].stopLossPct, minRewardRisk: s.minRewardRisk },
     });
   });
+
+  // "Best trades now": watchlist, scored picks with full plans, exit help and your results by setup.
+  app.get('/api/scanner', async () => (deps.scanner ? deps.scanner.state() : { enabled: false }));
+  app.get('/api/scanner/stats', async () => deps.scanner?.stats() ?? { bySetup: [], byHour: [], off: [] });
+  app.get('/api/scanner/exit-help', async () => deps.scanner?.exitHelp() ?? { enabled: false, items: [] });
 
   app.get<{ Params: { symbol: string } }>('/api/news/:symbol', async (req) => {
     const n = await deps.news?.get(req.params.symbol.toUpperCase());

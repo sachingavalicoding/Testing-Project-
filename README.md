@@ -34,6 +34,16 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
 - Paper / real switch and start / stop button. After a restart trading is always **stopped**.
 - Phone-installable web app (PWA).
 
+## Best trades now (the Best tab, off by default)
+Switch it on in Settings, under "Best trades scanner". Real prices only; when the evidence is weak it says **NO TRADE**.
+- **Pre-market list**: before 09:15 the shares are ranked by gap %, the indicated price, yesterday's volume, news today and distance to yesterday's high/low. The top 10 (your setting) become the day's watchlist and are fixed once the market opens.
+- **Live scan** (09:20 to 14:30 by default, every minute): each watchlist share is scored out of 100 - trend 30 (VWAP, EMA 9/21, 15-minute trend), volume surge 20, breakout 20 (opening range high, yesterday's high), momentum 15 (RSI, MACD), strength against the market 15. Only 70 or more is shown.
+- **Trade plan card**: entry zone, stop-loss (recent low, or 1 to 1.5 times the 5-minute ATR), target 1 at 1R, target 2 at 2R, reward-to-risk, quantity from your risk amount with charges included, the reasons, and "invalid if" conditions. A button buys it in one tap with the stop and target 2.
+- **Exit help** (own switch): move the stop to cost and sell half at 1R, trail the rest, and warnings for a VWAP break, volume drying up, a reversal candle, and a square-off warning. It is advice only and places no orders.
+- **Blocks**: choppy (flat) market, the first minutes after the open, shares near bad news or results, after your daily loss cap, and no averaging down. Each is a switch.
+- **Learns from you**: every pick shown is saved. Your own paper trades from the plan button are matched to them, and results are shown by setup and by time of day. With "Learn from my results" on, a setup that keeps losing is turned off.
+- Every limit and time is a setting. The scanner is **long only** (the app has no short selling) and the market reading uses the share list as a stand-in for Nifty.
+
 ## Real money lock (3 locks)
 1. `.env` must have `REAL_TRADING_ENABLED=true` (default `false`). While false the server cannot place a real order.
 2. You must type `I UNDERSTAND THIS USES REAL MONEY` in the app to switch.

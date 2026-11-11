@@ -28,6 +28,8 @@ export interface Position {
   estimated: boolean;
   /** Sell automatically when price reaches this (manual buys only) */
   target?: number;
+  /** The stop the position started with: 1R (the planned risk) is the distance from the entry to it */
+  stop0?: number;
 }
 
 export interface ManualBuyRequest {
@@ -260,10 +262,10 @@ export class AutoTrader {
     const pos: Position = {
       symbol: q.symbol, mode: this.mode, qty, entry, entryTs: this.now(), stop, highest: entry,
       marginUsed: need, pattern: 'manual', reason: 'Manual buy', orderId: res.orderId,
-      estimated: res.status !== 'filled', target,
+      estimated: res.status !== 'filled', target, stop0: stop,
     };
     this.positions.set(q.symbol, pos);
-    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
+    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
     return pos;
   }
 
@@ -283,10 +285,25 @@ export class AutoTrader {
     }
   }
 
+  /** Own money (margin) per trade; leverage multiplies it. 0 = size by risk per trade. From the settings page. */
+  capitalPerTrade = 0;
+  /** Most new auto trades in one minute (0 = no limit) */
+  entriesPerMinute = 0;
+  private entryMinute = 0;
+  private entriesThisMinute = 0;
+
+  /** Paper money to trade with (set on the settings page). Real mode always uses the CAPITAL from .env. */
+  paperCash: number | undefined;
+
+  /** The money available to this mode: the paper cash setting in paper mode, CAPITAL from .env in real mode. */
+  get capital(): number {
+    return this.mode === 'paper' && this.paperCash !== undefined ? this.paperCash : this.rules.capital;
+  }
+
   get freeCash(): number {
     let used = 0;
     for (const p of this.positions.values()) used += p.marginUsed;
-    return this.rules.capital + Math.min(0, this.realizedToday) - used;
+    return this.capital + Math.min(0, this.realizedToday) - used;
   }
 
   unrealized(): number {
@@ -307,7 +324,7 @@ export class AutoTrader {
       realizedToday: Math.round(this.realizedToday * 100) / 100,
       unrealized: this.unrealized(),
       freeCash: Math.round(this.freeCash),
-      rules: this.rules,
+      rules: { ...this.rules, capital: this.capital },
       pending: [...this.pending.values()],
       positions: [...this.positions.values()].map((p) => ({
         ...p,
@@ -425,6 +442,14 @@ export class AutoTrader {
     for (const { q, s } of candidates) {
       if (this.positions.size >= this.rules.maxOpenPositions) break;
       if (this.positions.has(q.symbol)) continue;
+      if (this.entriesPerMinute > 0) {
+        const minute = Math.floor(this.now() / 60_000);
+        if (minute !== this.entryMinute) {
+          this.entryMinute = minute;
+          this.entriesThisMinute = 0;
+        }
+        if (this.entriesThisMinute >= this.entriesPerMinute) break; // the next minute gets the rest, best score first
+      }
       if (this.filters.newsFilter && this.d.newsCheck) {
         const skip = await this.d.newsCheck(q.symbol);
         if (skip) {
@@ -456,12 +481,15 @@ export class AutoTrader {
       marginPerShare: probe.marginPerShare,
       riskPerTrade: this.rules.riskPerTrade,
       stopPct: s.stopPct,
+      capitalPerTrade: this.capitalPerTrade,
     });
     if (qty < 1) {
       this.d.db.log('info', `${q.symbol}: ${s.pattern} fired but size is 0 (free cash ₹${Math.round(this.freeCash)})`);
       return;
     }
-    const stop = initialStop(q.ltp, qty, s.stopPct, this.rules.riskPerTrade);
+    // With a fixed capital per trade the stop stays where the chart puts it (it is limited by the list's widest stop);
+    // the risk-per-trade cap would otherwise squeeze it tighter than normal price noise.
+    const stop = initialStop(q.ltp, qty, s.stopPct, this.capitalPerTrade > 0 ? Infinity : this.rules.riskPerTrade);
     // Saved with the trade: the pattern's reason plus every check it passed.
     const why = this.quality.enabled ? `${s.reason}. Checks passed: ${qualitySummary(q, this.d.store.candlesFor(q.symbol), this.quality, s)}` : s.reason;
     const res = await broker.placeOrder({ symbol: q.symbol, side: 'BUY', qty, reason: why });
@@ -472,6 +500,7 @@ export class AutoTrader {
     const entry = res.avgPrice ?? q.ltp;
     const target = this.quality.targetPct > 0 ? roundToTick(entry * (1 + this.quality.targetPct / 100), 'up') : undefined;
     this.enteredToday.add(q.symbol);
+    if (this.entriesPerMinute > 0) this.entriesThisMinute++;
     this.positions.set(q.symbol, {
       symbol: q.symbol,
       mode: this.mode,
@@ -486,6 +515,7 @@ export class AutoTrader {
       orderId: res.orderId,
       estimated: res.status !== 'filled',
       target,
+      stop0: stop,
     });
     this.d.db.log(
       'info',

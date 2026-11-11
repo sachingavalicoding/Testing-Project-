@@ -37,6 +37,11 @@ describe('position size', () => {
     expect(positionSize({ price: 1000, freeCash: 3000, marginPerShare: 200, riskPerTrade: 10000, stopPct: 0.01 })).toBe(15);
   });
 
+  it('sizes from a fixed capital per trade, ignoring the risk cap', () => {
+    expect(positionSize({ price: 1000, freeCash: 100000, marginPerShare: 200, riskPerTrade: 200, stopPct: 0.01, capitalPerTrade: 20000 })).toBe(100); // 20000 margin at 5x = 100 shares = 1 lakh
+    expect(positionSize({ price: 1000, freeCash: 5000, marginPerShare: 200, riskPerTrade: 200, stopPct: 0.01, capitalPerTrade: 20000 })).toBe(25); // never more than the free cash
+  });
+
   it('returns 0 for bad input', () => {
     expect(positionSize({ price: 0, freeCash: 3000, marginPerShare: 200, riskPerTrade: 200, stopPct: 0.01 })).toBe(0);
   });

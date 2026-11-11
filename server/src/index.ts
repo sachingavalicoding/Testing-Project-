@@ -9,6 +9,9 @@ import { Db } from './db/db.ts';
 import type { PriceFeed } from './market/feed.ts';
 import { MockFeed } from './market/mockFeed.ts';
 import { MarketStore } from './market/store.ts';
+import { seedHistory } from './market/seed.ts';
+import { loadDaily } from './scanner/daily.ts';
+import { ScannerService } from './scanner/service.ts';
 import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
 import { loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
@@ -73,17 +76,44 @@ const applySettings = () => {
     maxOpenPositions: l.maxOpenPositions,
     dailyLossCap: settings.dailyLossCap,
   });
+  trader.paperCash = settings.paperCash;
+  trader.capitalPerTrade = settings.capitalPerTrade;
+  trader.entriesPerMinute = settings.entriesPerMinute;
   trader.filters.requireAboveVwap = settings.requireAboveVwap;
   trader.filters.newsFilter = settings.newsFilter;
   Object.assign(trader.quality, { enabled: settings.qualityGate, targetPct: l.targetPct, stopLossPct: l.stopLossPct, minRewardRisk: settings.minRewardRisk });
 };
 applySettings();
 
-const startFeed = () =>
-  feed.start(UNIVERSES[universe].symbols, (quotes) => {
+const scanner = new ScannerService({
+  store,
+  db,
+  news,
+  settings: () => settings,
+  trader,
+  squareOffTime: () => config.money.squareOffTime,
+  listKey: () => universe,
+});
+
+let seedRun = 0;
+
+/** Yesterday's high, low and volume for the scanner's pre-market list. Only fetched while the scanner is on. */
+const loadScannerDaily = () => {
+  const run = seedRun;
+  void loadDaily(feed, UNIVERSES[universe].symbols, { stillWanted: () => run === seedRun, log: (m) => db.log('info', m) }).then((m) => {
+    if (run === seedRun) scanner.setDaily(m);
+  });
+};
+const startFeed = async () => {
+  await feed.start(UNIVERSES[universe].symbols, (quotes) => {
     store.update(quotes);
     void trader.onQuotes(quotes);
   });
+  // Fill in the day so far in the background; patterns need it (opening range, EMA, RSI, VWAP).
+  const run = ++seedRun;
+  void seedHistory(feed, store, UNIVERSES[universe].symbols, { stillWanted: () => run === seedRun, log: (m) => db.log('info', m) });
+  if (settings.scanner.enabled) loadScannerDaily();
+};
 await startFeed();
 
 /** Switch which 100 shares are watched and traded. Only one list is active at a time. */
@@ -110,6 +140,7 @@ const app = await buildApp({ db, store, trader, feed, upstox, universe: universe
     get: () => settings,
     update(input: unknown) {
       settings = validateSettings(input);
+      if (settings.scanner.enabled && scanner.daily.size === 0) loadScannerDaily();
       saveSettings(db, settings);
       applySettings();
       db.log('info', 'Settings saved');
@@ -117,6 +148,7 @@ const app = await buildApp({ db, store, trader, feed, upstox, universe: universe
     },
   },
   news,
+  scanner,
   patterns: PATTERNS, clientDist: resolve(here, '../../client/dist') });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`Stock IQ server on http://localhost:${config.port}  feed=${feed.name}  mode=${trader.mode}  real-lock=${config.realTradingEnabled ? 'OPEN' : 'LOCKED'}`);

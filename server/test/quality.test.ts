@@ -57,13 +57,16 @@ describe('vwapPullback', () => {
     101.95, 101.75, 101.55, 101.4, 101.3, 101.45, 101.9,
   ];
   it('fires on a bounce from support in an uptrend', () => {
-    const s = vwapPullback.check(quote(101.95), build(path));
+    const s = vwapPullback.check(quote(101.95), build(path, (i) => (i === path.length - 1 ? 2000 : 1000)));
     expect(s?.pattern).toBe('vwappb');
-    expect(s!.stopPct).toBeGreaterThanOrEqual(0.003);
+    expect(s!.stopPct).toBeGreaterThanOrEqual(0.004);
     expect(s!.stopPct).toBeLessThanOrEqual(0.01);
   });
+  it('ignores a bounce on thin volume', () => {
+    expect(vwapPullback.check(quote(101.95), build(path))).toBeUndefined();
+  });
   it('ignores a share that is falling on the day', () => {
-    expect(vwapPullback.check(quote(98.5, 101), build(path))).toBeUndefined();
+    expect(vwapPullback.check(quote(98.5, 101), build(path, (i) => (i === path.length - 1 ? 2000 : 1000)))).toBeUndefined();
   });
 });
 
@@ -121,7 +124,7 @@ describe('helpers', () => {
 });
 
 describe('per-list target and stop settings', () => {
-  const cfg = { money: { riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 2000, maxDayMovePctByList: { large: 3, mid: 6, small: 12 } } } as never;
+  const cfg = { money: { capital: 50000, riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 2000, maxDayMovePctByList: { large: 3, mid: 6, small: 12 } } } as never;
   it('gives each list its own starting target and stop', () => {
     const d = defaultSettings(cfg);
     expect(d.lists.large.targetPct).toBe(1);
@@ -133,6 +136,21 @@ describe('per-list target and stop settings', () => {
     const old = JSON.parse(JSON.stringify(d));
     for (const id of ['large', 'mid', 'small']) { delete old.lists[id].targetPct; delete old.lists[id].stopLossPct; }
     expect(validateSettings(old).lists.mid.targetPct).toBe(d.lists.mid.targetPct);
+  });
+  it('has a paper cash setting that is checked and defaults for older saved settings', () => {
+    const d = defaultSettings(cfg);
+    expect(d.paperCash).toBeGreaterThan(0);
+    const old = JSON.parse(JSON.stringify(d));
+    delete old.paperCash;
+    expect(validateSettings(old).paperCash).toBe(50000);
+    expect(validateSettings({ ...d, paperCash: 250000 }).paperCash).toBe(250000);
+    // capital per trade and entries per minute
+    expect(d.capitalPerTrade).toBe(20000);
+    expect(validateSettings(old).capitalPerTrade).toBe(20000);
+    expect(validateSettings({ ...d, capitalPerTrade: 0 }).capitalPerTrade).toBe(0);
+    expect(() => validateSettings({ ...d, capitalPerTrade: 500 })).toThrow(/capital per trade/);
+    expect(() => validateSettings({ ...d, entriesPerMinute: 0 })).toThrow(/per minute/);
+    expect(() => validateSettings({ ...d, paperCash: 10 })).toThrow(/paper cash/);
   });
   it('rejects a target below 0.75% or a silly stop', () => {
     const d = defaultSettings(cfg);
