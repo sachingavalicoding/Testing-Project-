@@ -116,7 +116,12 @@ export class ScannerService {
         continue;
       }
       let blocked: string | undefined;
-      if (disabled.includes(sc.setup)) blocked = `Setup "${SETUP_LABELS[sc.setup]}" is turned off: it keeps losing for you`;
+      if (s.requireVolume && (sc.volumeRatio === undefined || sc.volumeRatio < s.minVolumeRatio)) {
+        blocked =
+          sc.volumeRatio === undefined
+            ? 'No volume surge to confirm it: not enough candles yet'
+            : `Thin volume: the last 5 minutes are only ${sc.volumeRatio}x the day's earlier average (you require ${s.minVolumeRatio}x)`;
+      } else if (disabled.includes(sc.setup)) blocked = `Setup "${SETUP_LABELS[sc.setup]}" is turned off: it keeps losing for you`;
       else if (s.blockAveraging && this.d.trader.positions.has(item.symbol)) blocked = 'You already hold this share (no averaging down)';
       else if (s.blockNearNews && this.d.news) {
         const n = await this.d.news.get(item.symbol);

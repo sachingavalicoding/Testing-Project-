@@ -140,6 +140,8 @@ export function validateScanner(input: unknown, base: ScannerSettings = defaultS
     minStopPct: num('minimum stop %', s.minStopPct, base.minStopPct, 0.1, 5),
     maxStopPct: num('widest stop %', s.maxStopPct, base.maxStopPct, 0.2, 10),
     chopMovePct: num('flat market %', s.chopMovePct, base.chopMovePct, 0.02, 2),
+    requireVolume: bool('require a volume surge', s.requireVolume, base.requireVolume),
+    minVolumeRatio: num('volume surge multiple', s.minVolumeRatio, base.minVolumeRatio, 1, 10),
     blockChoppy: bool('block choppy market', s.blockChoppy, base.blockChoppy),
     blockNearNews: bool('block near news', s.blockNearNews, base.blockNearNews),
     blockAfterLossLimit: bool('block after loss limit', s.blockAfterLossLimit, base.blockAfterLossLimit),

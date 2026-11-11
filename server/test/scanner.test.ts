@@ -313,6 +313,8 @@ describe('scanner settings', () => {
     expect(() => validateScanner({ minStopPct: 2, maxStopPct: 1 })).toThrow(/smaller than/);
     expect(() => validateScanner({ enabled: 'yes' })).toThrow(/on or off/);
     expect(validateScanner({ minScore: 80, scanTo: '15:00' })).toMatchObject({ minScore: 80, scanTo: '15:00', enabled: false });
+    expect(validateScanner({})).toMatchObject({ requireVolume: true, minVolumeRatio: 1.2 });
+    expect(() => validateScanner({ minVolumeRatio: 0.5 })).toThrow(/volume surge multiple/);
   });
 
   it('keeps older saved settings (no scanner block) and fills in the defaults', () => {
@@ -331,13 +333,13 @@ describe('scanner settings', () => {
 describe('ScannerService', () => {
   const cfg = { money: { capital: 50000, riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 2000, maxDayMovePctByList: { large: 3, mid: 6, small: 12 } } } as never;
 
-  function setup(over: Partial<ReturnType<typeof defaultSettings>['scanner']> = {}, trader = { positions: new Map(), realizedToday: 0, unrealized: () => 0 }, now = T1100) {
+  function setup(over: Partial<ReturnType<typeof defaultSettings>['scanner']> = {}, trader = { positions: new Map(), realizedToday: 0, unrealized: () => 0 }, now = T1100, candles: Candle[] = climb) {
     const store = new MarketStore();
     // 25 other shares: a few up, most flat, so the market is not "choppy"
     const others = Array.from({ length: 25 }, (_, i) => quote(`O${i}`, i < 15 ? 100.6 : 99.95, now));
     const up = quote('UP', 103, now, 100, 101); // gapped up 1%, now +3%
     store.update([...others, up]);
-    store.seedCandles('UP', climb);
+    store.seedCandles('UP', candles);
     const db = new Db(':memory:');
     const settings = defaultSettings(cfg);
     settings.scanner = { ...settings.scanner, enabled: true, watchlistSize: 3, ...over };
@@ -385,6 +387,21 @@ describe('ScannerService', () => {
     expect(s.noTrade).toBe(true);
     expect(s.picks).toEqual([]);
     expect(s.noTradeWhy!.join(' ')).toMatch(/No share on the watchlist scores 100 or more/);
+  });
+
+  it('skips a breakout on thin volume, with the reason, unless the volume switch is off', async () => {
+    // same climb, but the last minutes are quiet
+    const quiet = day((i) => (i < 15 ? 100 + 0.2 * Math.sin(i) : 100.3 + (i - 15) * 0.03), (i) => (i >= 100 ? 200 : 1000));
+    const thin = setup({ minScore: 60 }, undefined, T1100, quiet);
+    const s = await thin.svc.state();
+    expect(s.picks).toEqual([]);
+    expect(s.skipped![0].why).toMatch(/Thin volume: the last 5 minutes are only 0.2x the day's earlier average \(you require 1.2x\)/);
+
+    const off = setup({ requireVolume: false, minScore: 60 }, undefined, T1100, quiet);
+    expect((await off.svc.state()).picks![0].symbol).toBe('UP');
+
+    const strict = setup({ minVolumeRatio: 5 }); // the normal climb has 3x
+    expect((await strict.svc.state()).picks).toEqual([]);
   });
 
   it('blocks everything after the daily loss limit, and when the market is choppy', async () => {

@@ -125,6 +125,8 @@ export default function Settings() {
         <Field label="Closest stop (%)" hint="Stops closer than this get hit by noise and charges" value={sc.minStopPct} step={0.05} onChange={(n) => setSc({ minStopPct: n })} />
         <Field label="Widest stop (%)" hint="No plan if the stop would have to be wider than this" value={sc.maxStopPct} step={0.1} onChange={(n) => setSc({ maxStopPct: n })} />
         <Field label="Market counts as flat inside (%)" hint="Median share inside plus or minus this, with most shares barely moving" value={sc.chopMovePct} step={0.05} onChange={(n) => setSc({ chopMovePct: n })} />
+        <Toggle label="Require a volume surge" hint="Skip a pick when the last 5 minutes trade on thin volume. A breakout without volume often fails" value={sc.requireVolume} onChange={(b) => setSc({ requireVolume: b })} />
+        <Field label="Volume surge (times the day's average)" hint="Last 5 minutes must be at least this many times the day's earlier average. 1.2 means 20% more" value={sc.minVolumeRatio} step={0.1} onChange={(n) => setSc({ minVolumeRatio: n })} />
         <Toggle label="Block when the market is choppy" hint="Flat market: breakouts tend to fail" value={sc.blockChoppy} onChange={(b) => setSc({ blockChoppy: b })} />
         <Toggle label="Block shares near big news" hint="Bad news or results / board meeting in the last 2 days" value={sc.blockNearNews} onChange={(b) => setSc({ blockNearNews: b })} />
         <Toggle label="Block after the daily loss limit" hint={`Uses your daily loss cap (now ${rupee(s.dailyLossCap)})`} value={sc.blockAfterLossLimit} onChange={(b) => setSc({ blockAfterLossLimit: b })} />

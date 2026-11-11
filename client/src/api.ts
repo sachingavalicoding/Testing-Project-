@@ -64,7 +64,7 @@ export interface AppSettings {
 export interface ScannerSettings {
   enabled: boolean; watchlistSize: number; minScore: number; scanFrom: string; scanTo: string; noEntryFirstMinutes: number;
   riskPerTrade: number; atrStopMult: number; minStopPct: number; maxStopPct: number; chopMovePct: number;
-  blockChoppy: boolean; blockNearNews: boolean; blockAfterLossLimit: boolean; blockAveraging: boolean;
+  requireVolume: boolean; minVolumeRatio: number; blockChoppy: boolean; blockNearNews: boolean; blockAfterLossLimit: boolean; blockAveraging: boolean;
   exitHelp: boolean; squareOffWarnMin: number; learn: boolean; learnMinTrades: number; learnMinWinRate: number;
 }
 export interface ScorePart { key: string; label: string; points: number; max: number; note: string }

@@ -61,6 +61,7 @@ export function scoreStock({ q, candles, daily, marketPct }: ScoreInput): ScoreR
   // ---- volume surge (20)
   let volPts = 0;
   let volNote = 'not enough candles yet';
+  let volumeRatio: number | undefined;
   if (done.length >= 15) {
     const recent = done.slice(-5).map((c) => c.v);
     const earlier = done.slice(0, -5).map((c) => c.v);
@@ -68,6 +69,7 @@ export function scoreStock({ q, candles, daily, marketPct }: ScoreInput): ScoreR
     const earlierAvg = sma(earlier, earlier.length) ?? 0;
     if (earlierAvg > 0) {
       const ratio = recentAvg / earlierAvg;
+      volumeRatio = ratio;
       volPts = Math.round(clamp(ratio - 1, 0, 1) * 20);
       volNote = `last 5 minutes ${ratio.toFixed(1)}x the day's earlier average`;
     }
@@ -133,5 +135,5 @@ export function scoreStock({ q, candles, daily, marketPct }: ScoreInput): ScoreR
 
   const score = parts.reduce((s, p) => s + p.points, 0);
   const setup: Setup = orb ? 'orb' : pdh ? 'pdh' : volPts >= 10 ? 'volume' : 'trend';
-  return { score: round2(score), parts, setup };
+  return { score: round2(score), parts, setup, volumeRatio: volumeRatio === undefined ? undefined : round2(volumeRatio) };
 }

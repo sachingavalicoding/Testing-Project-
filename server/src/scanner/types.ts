@@ -21,6 +21,10 @@ export interface ScannerSettings {
   maxStopPct: number;
   /** Market-flat check: median share inside +/- this % today counts as flat */
   chopMovePct: number;
+  /** Show a pick only when the last 5 minutes trade at least `minVolumeRatio` times the day's earlier volume */
+  requireVolume: boolean;
+  /** The volume multiple that counts as a surge (1.2 = 20% above the day's earlier average) */
+  minVolumeRatio: number;
   /** Block entries when the market looks choppy (flat) */
   blockChoppy: boolean;
   /** Block shares with bad news or results in the last 2 days */
@@ -53,6 +57,8 @@ export const defaultScanner: ScannerSettings = {
   minStopPct: 0.4,
   maxStopPct: 1.5,
   chopMovePct: 0.15,
+  requireVolume: true,
+  minVolumeRatio: 1.2,
   blockChoppy: true,
   blockNearNews: true,
   blockAfterLossLimit: true,
@@ -93,6 +99,8 @@ export interface ScorePart {
 }
 
 export interface ScoreResult {
+  /** Last 5 minutes of volume against the day's earlier average (undefined when there are too few candles) */
+  volumeRatio?: number;
   score: number;
   parts: ScorePart[];
   setup: Setup;
