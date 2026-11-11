@@ -99,13 +99,13 @@ describe('manual trading', () => {
     await expect(trader.manualBuy({ symbol: 'MRF', qty: 1, type: 'market' })).resolves.toBeTruthy();
   });
 
-  it('cannot buy the same share twice or after the day was stopped', async () => {
+  it('cannot buy the same share twice, but can trade again right after a kill-all', async () => {
     await push(quote('INFY', 1000));
     await trader.manualBuy({ symbol: 'INFY', qty: 1, type: 'market' });
     await expect(trader.manualBuy({ symbol: 'INFY', qty: 1, type: 'market' })).rejects.toThrow(/already hold/);
     await trader.killAll();
     await push(quote('TCS', 1000));
-    await expect(trader.manualBuy({ symbol: 'TCS', qty: 1, type: 'market' })).rejects.toThrow(/Stopped for today/);
+    await expect(trader.manualBuy({ symbol: 'TCS', qty: 1, type: 'market' })).resolves.toMatchObject({ status: 'filled' });
   });
 
   it('kill-all also drops waiting orders', async () => {

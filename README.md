@@ -25,7 +25,7 @@ This is **step 1** of the plan (base app + paper trading). Built from the projec
 - Stop loss capped so a loss **including all charges** never goes past `RISK_PER_TRADE`.
 - Percent ladder: stop moves to break-even (incl. charges), then locks profit step by step. It never moves down.
 - 1-minute entry check: skips shares that already moved more than the day-move limit (3% Large, 6% Mid, 12% Small; change in `.env`); one entry per share per day.
-- **Daily loss cap** (counts open losses too) and a **KILL ALL** button. Both sell everything and stop for the day.
+- **Daily loss cap** (counts open losses too): sells everything and stops for the day. The **KILL ALL** button sells everything (buys back shorts) and stops auto trading, but does not lock the day: press Start again whenever you like.
 - Auto square-off at `SQUARE_OFF_TIME` (15:15 IST).
 - **Settings page** in the app: per share list (Large / Mid / Small) the day-move limit, risk per trade, max open positions, profit target and widest stop, plus daily loss cap. Saved in the database; `.env` values are only the first defaults.
 - **Picks tab**: today's ideas from the chosen list (pattern fired now, or a big mover to watch) with a Buy idea / Watch / Avoid label, the reason, and news headlines (Google News, free, no key). The auto trader uses the same checks.

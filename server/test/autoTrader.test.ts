@@ -235,13 +235,18 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.get('GOOD')!.stop).toBe(1010);
   });
 
-  it('kill-all sells everything and blocks restart for the day', async () => {
+  it('kill-all sells everything and stops auto trading, but does not lock the day', async () => {
     trader.start();
     await push(quote('GOA', 1000), quote('GOB', 1000));
     await trader.killAll();
     expect(trader.positions.size).toBe(0);
     expect(trader.running).toBe(false);
-    expect(() => trader.start()).toThrow(/Stopped for today/);
+    expect(trader.haltedReason).toBeUndefined();
+    expect(db.recentEvents(5).some((e) => /KILL ALL: Kill-all pressed \(you can start again any time\)/.test(e.message))).toBe(true);
+    // start again right away and it takes trades again
+    expect(() => trader.start()).not.toThrow();
+    await push(quote('GOC', 1000));
+    expect(trader.positions.has('GOC')).toBe(true);
   });
 
   it('daily loss cap stops trading', async () => {
@@ -259,6 +264,7 @@ describe('AutoTrader (paper)', () => {
     await push(quote('GOOD', 994)); // ~₹120+ open loss, above stop
     expect(trader.haltedReason).toMatch(/Daily loss cap/);
     expect(trader.positions.size).toBe(0);
+    expect(() => trader.start()).toThrow(/Stopped for today/); // the loss cap you set is the one thing that locks the day
   });
 });
 

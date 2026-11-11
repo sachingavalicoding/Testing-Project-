@@ -215,16 +215,20 @@ export class AutoTrader {
     this.d.db.log('info', `Auto trading stopped (${this.mode})`);
   }
 
-  /** Kill switch: sell everything now and stop for the rest of the day. */
+  /**
+   * Kill switch: sell (or buy back) everything now, cancel waiting orders and stop auto trading.
+   * It does NOT lock the day: press Start again, or place a manual order, whenever you like.
+   */
   async killAll(reason = 'Kill-all pressed'): Promise<void> {
-    await this.withLock(() => this.killAllNow(reason));
+    await this.withLock(() => this.killAllNow(reason, false));
   }
 
-  private async killAllNow(reason: string): Promise<void> {
+  /** `halt` also locks trading for the rest of the day. Only the daily loss cap does that. */
+  private async killAllNow(reason: string, halt = true): Promise<void> {
     this.running = false;
-    this.haltedReason = reason;
+    if (halt) this.haltedReason = reason;
     this.pending.clear();
-    this.d.db.log('warn', `KILL ALL: ${reason}`);
+    this.d.db.log('warn', `KILL ALL: ${reason}${halt ? ' (trading is locked for today)' : ' (you can start again any time)'}`);
     for (const p of [...this.positions.values()]) await this.exit(p, reason);
   }
 

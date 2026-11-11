@@ -141,7 +141,7 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
               onClick={() => act(() => post('/api/auto/start'))}>Start {s.mode}</button>
           )}
           <button className="rounded bg-red-700 py-2 font-bold"
-            onClick={() => window.confirm('Sell ALL positions now and stop for today?') && act(() => post('/api/kill-all'))}>
+            onClick={() => window.confirm('Sell ALL positions now and stop auto trading? You can press Start again any time.') && act(() => post('/api/kill-all'))}>
             KILL ALL
           </button>
         </div>
