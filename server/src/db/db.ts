@@ -59,6 +59,7 @@ export class Db {
         charges REAL NOT NULL, net_pnl REAL NOT NULL
       );
       CREATE INDEX IF NOT EXISTS trades_day ON trades(day);
+      CREATE TABLE IF NOT EXISTS open_positions (symbol TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS scanner_picks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         day TEXT NOT NULL, ts INTEGER NOT NULL, symbol TEXT NOT NULL, setup TEXT NOT NULL, score REAL NOT NULL,
@@ -99,6 +100,19 @@ export class Db {
 
   log(level: EventRow['level'], message: string): void {
     this.db.prepare('INSERT INTO events (ts, level, message) VALUES (?, ?, ?)').run(Date.now(), level, message);
+  }
+
+  /** Open paper positions are kept here so a restart does not lose them. */
+  saveOpenPosition(symbol: string, json: string): void {
+    this.db.prepare('INSERT INTO open_positions (symbol, data) VALUES (?, ?) ON CONFLICT(symbol) DO UPDATE SET data = excluded.data').run(symbol, json);
+  }
+
+  deleteOpenPosition(symbol: string): void {
+    this.db.prepare('DELETE FROM open_positions WHERE symbol = ?').run(symbol);
+  }
+
+  openPositions(): string[] {
+    return (this.db.prepare('SELECT data FROM open_positions').all() as unknown as Array<{ data: string }>).map((r) => r.data);
   }
 
   /** Save a scanner pick the first time it is shown for a share and setup on a day. Returns false if already saved. */

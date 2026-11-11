@@ -104,6 +104,56 @@ describe('AutoTrader (paper)', () => {
     expect(trader.positions.size).toBe(1);
   });
 
+  it('writes the market price and the slippage into the BUY and SELL log lines', async () => {
+    const slippy = new AutoTrader({ rules, db, store, paperBroker: new PaperBroker((s) => store.quote(s)?.ltp, undefined, 5, () => 0.5), realAllowed: false, patterns: [alwaysGo], ignoreMarketHours: true });
+    trader = slippy;
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const buy = db.recentEvents(20).find((e) => /^BUY \d+ GOOD/.test(e.message))!.message;
+    expect(buy).toMatch(/@ 1005 \(market 1000, filled 1005: 0.50% above the market price\)/); // the test broker slips 0.5%
+    await trader.killAll();
+    const sell = db.recentEvents(20).find((e) => /^SELL \d+ GOOD/.test(e.message))!.message;
+    expect(sell).toMatch(/below the market price/);
+  });
+
+  describe('open positions across a restart', () => {
+    const fresh = () => new AutoTrader({ rules, db, store, paperBroker: new PaperBroker((s) => store.quote(s)?.ltp, undefined, 5), realAllowed: false, patterns: [alwaysGo], ignoreMarketHours: true });
+
+    it('brings back an open paper position with its stop, target and margin, and still watches the stop', async () => {
+      trader.quality.targetPct = 3;
+      trader.start();
+      await push(quote('GOOD', 1000));
+      await push(quote('GOOD', 1020)); // the profit ladder moves the stop up
+      const before = trader.positions.get('GOOD')!;
+      expect(before.stop).toBeGreaterThan(990);
+
+      const again = fresh(); // a restart: new trader, same database
+      expect(again.running).toBe(false); // trading never auto-starts
+      const p = again.positions.get('GOOD')!;
+      expect(p).toMatchObject({ qty: before.qty, entry: before.entry, stop: before.stop, target: before.target, marginUsed: before.marginUsed, stop0: before.stop0 });
+      expect(again.freeCash).toBeCloseTo(trader.freeCash, 5);
+      expect(db.recentEvents(5).some((e) => /Restored 1 open paper position/.test(e.message))).toBe(true);
+
+      // the stop is watched even though auto trading is stopped
+      trader = again;
+      await push(quote('GOOD', p.stop - 1));
+      expect(again.positions.size).toBe(0);
+      expect(db.openPositions()).toHaveLength(0);
+      expect(db.recentTrades(5)).toHaveLength(1);
+      expect(fresh().positions.size).toBe(0); // and it does not come back once closed
+    });
+
+    it('does not bring back an old day position, a real-mode one, or a broken record', () => {
+      const old = { symbol: 'OLD', mode: 'paper', qty: 5, entry: 100, stop: 99, entryTs: Date.now() - 2 * 86_400_000, highest: 100, marginUsed: 100, pattern: 'x', reason: '', orderId: '', estimated: false };
+      db.saveOpenPosition('OLD', JSON.stringify(old));
+      db.saveOpenPosition('BROKEN', '{nope');
+      db.saveOpenPosition('REAL', JSON.stringify({ ...old, symbol: 'REAL', mode: 'real', entryTs: Date.now() }));
+      const again = fresh();
+      expect(again.positions.size).toBe(0);
+      expect(db.openPositions().join('')).not.toContain('"OLD"'); // yesterday's is cleared out
+    });
+  });
+
   it('skips shares that already moved too much today', async () => {
     trader.start();
     await push(quote('GOFAST', 1050, 1000)); // +5%

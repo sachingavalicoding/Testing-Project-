@@ -32,6 +32,12 @@ export interface Position {
   stop0?: number;
 }
 
+/** ' (market 3518.1, filled 3528.7: 0.30% slippage)' when the fill differs from the market price, so a fill is never a mystery. */
+export function slipNote(market: number | undefined, fill: number): string {
+  if (market === undefined || market <= 0 || Math.abs(fill - market) < 1e-9) return '';
+  return ` (market ${market}, filled ${fill}: ${(((fill - market) / market) * 100).toFixed(2)}% ${fill > market ? 'above' : 'below'} the market price)`;
+}
+
 export interface ManualBuyRequest {
   symbol: string;
   qty: number;
@@ -112,6 +118,39 @@ export class AutoTrader {
       this.realizedToday += t.net_pnl;
       this.enteredToday.add(t.symbol);
     }
+    this.restorePositions();
+  }
+
+  /**
+   * Open paper positions survive a restart. Only today's are brought back (intraday positions never carry over),
+   * and only in paper mode (real positions belong to the broker). Stops, targets and the square-off are watched
+   * again straight away, even while auto trading is stopped.
+   */
+  private restorePositions(): void {
+    const restored: string[] = [];
+    for (const json of this.d.db.openPositions()) {
+      let p: Position | undefined;
+      try {
+        p = JSON.parse(json) as Position;
+      } catch {
+        p = undefined;
+      }
+      const ok = p && typeof p.symbol === 'string' && p.mode === 'paper' && Number.isFinite(p.qty) && p.qty > 0 && Number.isFinite(p.entry) && Number.isFinite(p.stop) && Number.isFinite(p.entryTs);
+      if (!p || !ok) continue;
+      if (this.mode !== 'paper' || istDate(p.entryTs) !== this.day) {
+        if (istDate(p.entryTs) !== this.day) this.d.db.deleteOpenPosition(p.symbol); // yesterday's: gone
+        continue;
+      }
+      this.positions.set(p.symbol, p);
+      this.enteredToday.add(p.symbol);
+      restored.push(`${p.symbol} (${p.qty} @ ${p.entry}, stop ${p.stop})`);
+    }
+    if (restored.length) this.d.db.log('info', `Restored ${restored.length} open paper position${restored.length === 1 ? '' : 's'} after the restart: ${restored.join(', ')}`);
+  }
+
+  /** Remember an open paper position (called when it opens and whenever its stop moves). */
+  private persist(p: Position): void {
+    if (p.mode === 'paper') this.d.db.saveOpenPosition(p.symbol, JSON.stringify(p));
   }
 
   private get broker(): Broker {
@@ -265,7 +304,8 @@ export class AutoTrader {
       estimated: res.status !== 'filled', target, stop0: stop,
     };
     this.positions.set(q.symbol, pos);
-    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
+    this.persist(pos);
+    this.d.db.log('info', `MANUAL BUY ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''}`);
     return pos;
   }
 
@@ -383,6 +423,7 @@ export class AutoTrader {
         if (next > p.stop) {
           this.d.db.log('info', `${p.symbol} stop moved up ${p.stop} → ${next}`);
           p.stop = next;
+          this.persist(p);
         }
       }
       if (q.ltp <= p.stop) await this.exit(p, `Stop hit at ${q.ltp} (stop ${p.stop})`);
@@ -517,9 +558,10 @@ export class AutoTrader {
       target,
       stop0: stop,
     });
+    this.persist(this.positions.get(q.symbol)!);
     this.d.db.log(
       'info',
-      `BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
+      `BUY ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
     );
   }
 
@@ -533,6 +575,7 @@ export class AutoTrader {
     const charges = roundTripCharges(p.entry, exitPrice, p.qty).total;
     const pnl = netPnl(p.entry, exitPrice, p.qty);
     this.positions.delete(p.symbol);
+    this.d.db.deleteOpenPosition(p.symbol);
     this.realizedToday += pnl;
     this.d.db.addTrade({
       day: this.day,
@@ -549,6 +592,6 @@ export class AutoTrader {
       charges,
       net_pnl: pnl,
     });
-    this.d.db.log('info', `SELL ${p.qty} ${p.symbol} @ ${exitPrice} net ₹${pnl} — ${why}`);
+    this.d.db.log('info', `SELL ${p.qty} ${p.symbol} @ ${exitPrice}${slipNote(this.d.store.quote(p.symbol)?.ltp, exitPrice)} net ₹${pnl} — ${why}`);
   }
 }
