@@ -75,6 +75,7 @@ const applySettings = () => {
   });
   trader.filters.requireAboveVwap = settings.requireAboveVwap;
   trader.filters.newsFilter = settings.newsFilter;
+  Object.assign(trader.quality, { enabled: settings.qualityGate, targetPct: settings.targetPct, minRewardRisk: settings.minRewardRisk });
 };
 applySettings();
 

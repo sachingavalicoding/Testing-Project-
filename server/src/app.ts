@@ -15,6 +15,7 @@ import type { Candle, Mode } from './types.ts';
 import type { AppSettings } from './settings.ts';
 import type { NewsService } from './news/news.ts';
 import { buildPicks } from './picks.ts';
+import { defaultQuality } from './trading/quality.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 
@@ -171,6 +172,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       patterns: deps.patterns,
       news: deps.news,
       maxDayMovePct: s.lists[deps.universe.current].maxDayMovePct,
+      quality: { ...defaultQuality, enabled: s.qualityGate, targetPct: s.targetPct, minRewardRisk: s.minRewardRisk },
     });
   });
 

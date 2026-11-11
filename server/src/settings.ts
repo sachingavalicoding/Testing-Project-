@@ -20,6 +20,12 @@ export interface AppSettings {
   requireAboveVwap: boolean;
   /** Skip shares with bad news or results coming */
   newsFilter: boolean;
+  /** Extra entry checks: trend (EMA9>EMA21), RSI, not chasing, time window, weak-market stop, reward-to-risk */
+  qualityGate: boolean;
+  /** Profit target for every auto entry, % (minimum 0.75) */
+  targetPct: number;
+  /** Target must be at least this many times the stop distance */
+  minRewardRisk: number;
 }
 
 export function defaultSettings(c: Config): AppSettings {
@@ -33,6 +39,9 @@ export function defaultSettings(c: Config): AppSettings {
     dailyLossCap: m.dailyLossCap,
     requireAboveVwap: true,
     newsFilter: true,
+    qualityGate: true,
+    targetPct: 1,
+    minRewardRisk: 1.5,
   };
 }
 
@@ -66,6 +75,10 @@ export function validateSettings(input: unknown): AppSettings {
     dailyLossCap: inRange('daily loss cap', s.dailyLossCap, 50, 1_000_000),
     requireAboveVwap: s.requireAboveVwap,
     newsFilter: s.newsFilter,
+    // Older saved settings do not have these yet: use the defaults instead of throwing them away.
+    qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
+    targetPct: s.targetPct === undefined ? 1 : inRange('profit target %', s.targetPct, 0.75, 5),
+    minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
   };
 }
 

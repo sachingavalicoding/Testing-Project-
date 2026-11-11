@@ -23,3 +23,24 @@ export function vwap(candles: Array<{ h: number; l: number; c: number; v: number
   }
   return vol > 0 ? pv / vol : undefined;
 }
+
+/** Relative strength index (Wilder). Returns undefined until there are `period + 1` values. */
+export function rsi(values: number[], period = 14): number | undefined {
+  if (values.length < period + 1) return undefined;
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = values[i] - values[i - 1];
+    if (d >= 0) gain += d;
+    else loss -= d;
+  }
+  gain /= period;
+  loss /= period;
+  for (let i = period + 1; i < values.length; i++) {
+    const d = values[i] - values[i - 1];
+    gain = (gain * (period - 1) + Math.max(0, d)) / period;
+    loss = (loss * (period - 1) + Math.max(0, -d)) / period;
+  }
+  if (loss === 0) return 100;
+  return 100 - 100 / (1 + gain / loss);
+}

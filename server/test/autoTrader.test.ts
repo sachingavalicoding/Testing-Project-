@@ -63,6 +63,17 @@ describe('AutoTrader (paper)', () => {
     expect(p.stop).toBeGreaterThanOrEqual(990);
   });
 
+  it('sets the profit target and sells when it is reached', async () => {
+    trader.quality.targetPct = 1;
+    trader.start();
+    await push(quote('GOOD', 1000));
+    const p = trader.positions.get('GOOD')!;
+    expect(p.target).toBeGreaterThanOrEqual(1010);
+    expect(p.target).toBeLessThan(1012);
+    await push(quote('GOOD', p.target!));
+    expect(trader.positions.has('GOOD')).toBe(false);
+  });
+
   it('skips shares that already moved too much today', async () => {
     trader.start();
     await push(quote('GOFAST', 1050, 1000)); // +5%

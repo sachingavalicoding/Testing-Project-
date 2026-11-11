@@ -69,6 +69,18 @@ export default function Settings() {
         </label>
       </section>
 
+      <section className="rounded-lg bg-slate-900 p-3">
+        <h2 className="mb-1 font-semibold">Better entries and profit target</h2>
+        <label className="flex items-center justify-between py-1.5 text-sm">
+          <span>Only take high quality entries<br /><span className="text-xs text-slate-500">Needs short-term uptrend (EMA9 above EMA21), healthy RSI, price not stretched above VWAP, no entries in the first 10 minutes or after 2:30 PM, and skips the day when most shares are falling</span></span>
+          <input type="checkbox" checked={s.qualityGate} onChange={(e) => setS({ ...s, qualityGate: e.target.checked })} className="h-5 w-5" />
+        </label>
+        <Field label="Profit target (%)" hint="Sell when a share gains this much from the buy price. Minimum 0.75, 1 to 1.5 suits Nifty shares" step={0.25}
+          value={s.targetPct} onChange={(n) => setS({ ...s, targetPct: n })} />
+        <Field label="Reward to risk (times)" hint="The target must be at least this many times the stop distance, otherwise the trade is skipped" step={0.25}
+          value={s.minRewardRisk} onChange={(n) => setS({ ...s, minRewardRisk: n })} />
+      </section>
+
       <button onClick={save} className="w-full rounded bg-sky-700 py-3 font-bold">Save settings</button>
     </div>
   );

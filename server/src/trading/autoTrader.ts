@@ -10,6 +10,7 @@ import { vwap } from './indicators.ts';
 import { randomUUID } from 'node:crypto';
 import { roundToTick } from './ticks.ts';
 import { initialStop, ladderStop, type LadderRule } from './stops.ts';
+import { defaultQuality, marketBreadthPct, qualityReject, type QualityRules } from './quality.ts';
 
 export interface Position {
   symbol: string;
@@ -127,6 +128,9 @@ export class AutoTrader {
   }
 
   filters = { requireAboveVwap: true, newsFilter: true };
+
+  /** Entry quality checks and the automatic profit target (set from the settings page). */
+  quality: QualityRules = { ...defaultQuality };
 
   setMode(mode: Mode, confirm?: string): void {
     if (mode === this.mode) return;
@@ -372,6 +376,11 @@ export class AutoTrader {
   private async lookForEntries(quotes: Quote[]): Promise<void> {
     if (!this.inTradingWindow()) return;
     if (this.positions.size >= this.rules.maxOpenPositions) return;
+    if (this.quality.enabled) {
+      // A weak market (most shares down) makes long entries fail more often: sit out.
+      const breadth = marketBreadthPct(quotes);
+      if (breadth !== undefined && breadth < this.quality.breadthMin) return;
+    }
     const candidates: Array<{ q: Quote; s: Signal }> = [];
     for (const q of quotes) {
       if (this.positions.has(q.symbol) || this.enteredToday.has(q.symbol)) continue;
@@ -387,6 +396,7 @@ export class AutoTrader {
           const v = vwap(today);
           if (v !== undefined && q.ltp < v) continue;
         }
+        if (qualityReject(q, candles, s, this.quality) !== undefined) continue;
         candidates.push({ q, s });
       }
     }
@@ -428,6 +438,7 @@ export class AutoTrader {
       return;
     }
     const entry = res.avgPrice ?? q.ltp;
+    const target = this.quality.targetPct > 0 ? roundToTick(entry * (1 + this.quality.targetPct / 100), 'up') : undefined;
     this.enteredToday.add(q.symbol);
     this.positions.set(q.symbol, {
       symbol: q.symbol,
@@ -442,10 +453,11 @@ export class AutoTrader {
       reason: s.reason,
       orderId: res.orderId,
       estimated: res.status !== 'filled',
+      target,
     });
     this.d.db.log(
       'info',
-      `BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop} lev ${probe.leverage.toFixed(1)}x — ${s.reason}`,
+      `BUY ${qty} ${q.symbol} @ ${entry} [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${s.reason}`,
     );
   }
 
