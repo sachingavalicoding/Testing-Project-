@@ -17,6 +17,8 @@ export type FeedKind = 'upstox' | 'mock';
 
 export interface Config {
   port: number;
+  /** One shared password for the whole app. Set it on any server reachable from the internet */
+  appPassword: string;
   dbPath: string;
   feed: FeedKind;
   upstox: {
@@ -44,6 +46,7 @@ export function loadConfig(): Config {
   if (feed !== 'upstox' && feed !== 'mock') throw new Error(`FEED must be "upstox" or "mock"`);
   return {
     port: num('PORT', 8080),
+    appPassword: str('APP_PASSWORD'),
     dbPath: str('DB_PATH', './data/stock-iq.db'),
     feed,
     upstox: {

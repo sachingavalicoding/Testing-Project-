@@ -20,6 +20,7 @@ import type { ScannerService } from './scanner/service.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
 import { registerLab } from './lab/routes.ts';
+import { registerAuth } from './auth.ts';
 
 export interface AppDeps {
   db: Db;
@@ -35,6 +36,8 @@ export interface AppDeps {
   patterns: Pattern[];
   scanner?: ScannerService;
   clientDist?: string;
+  /** APP_PASSWORD: when set, every /api call needs the login cookie */
+  appPassword?: string;
 }
 
 function page(title: string, text: string): string {
@@ -45,7 +48,8 @@ function page(title: string, text: string): string {
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { db, store, trader, feed, upstox } = deps;
   const app = Fastify({ logger: false });
-  await app.register(cors, { origin: true });
+  await app.register(cors, { origin: true, credentials: true });
+  registerAuth(app, deps.appPassword);
 
   const fail = (msg: string) => ({ ok: false, error: msg });
 

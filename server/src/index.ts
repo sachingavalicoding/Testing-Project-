@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.ts';
@@ -130,7 +131,7 @@ const universeControl = {
   },
 };
 
-const app = await buildApp({ db, store, trader, feed, upstox, feedWanted: config.feed, universe: universeControl,
+const app = await buildApp({ appPassword: config.appPassword || undefined, db, store, trader, feed, upstox, feedWanted: config.feed, universe: universeControl,
   settings: {
     get: () => settings,
     update(input: unknown) {
@@ -144,7 +145,7 @@ const app = await buildApp({ db, store, trader, feed, upstox, feedWanted: config
   },
   news,
   scanner,
-  patterns: PATTERNS, clientDist: resolve(here, '../../client/dist') });
+  patterns: PATTERNS, clientDist: [resolve(here, '../../client/dist'), resolve(here, '../../app-build')].find((d) => existsSync(resolve(d, 'index.html'))) });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`Stock IQ server on http://localhost:${config.port}  feed=${feed.name}  mode=${trader.mode}  real-lock=${config.realTradingEnabled ? 'OPEN' : 'LOCKED'}`);
 
@@ -158,6 +159,8 @@ if (feed.name !== 'mock') {
     }
   }, 60_000).unref();
 }
+
+if (!config.appPassword) console.log('Note: no APP_PASSWORD set. Anyone who can reach this port can trade. Set one in .env before putting it on a server or a shared Wi-Fi.');
 
 const shutdown = () => {
   feed.stop();

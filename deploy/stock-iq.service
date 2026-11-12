@@ -1,0 +1,17 @@
+# systemd unit for a Linux server. Copy to /etc/systemd/system/stock-iq.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now stock-iq
+[Unit]
+Description=Stock IQ
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=stockiq
+WorkingDirectory=/opt/stock-iq
+ExecStart=/usr/bin/node --no-warnings node_modules/.bin/tsx --env-file-if-exists=.env server/src/index.ts
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

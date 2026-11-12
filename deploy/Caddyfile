@@ -1,0 +1,7 @@
+# HTTPS in front of the app, with a free certificate. Replace the name with your own domain (its DNS must point at this server).
+# Install Caddy, put this at /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
+stock.example.com {
+	reverse_proxy localhost:8080 {
+		flush_interval -1
+	}
+}

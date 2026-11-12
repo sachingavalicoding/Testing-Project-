@@ -54,11 +54,32 @@ Small-cap risk: a share that is up near its daily limit (circuit) can freeze, an
 
 Real orders also need a **fixed IP registered with Upstox** (SEBI/NSE rule), so they will only work from a small cloud server, not from the phone.
 
-## Run it (phone with Termux, or any computer)
+## Run it on your phone (Termux)
+The app is a small server plus a web app. On the phone the server runs inside Termux and you use the app in Chrome, which can install it to the home screen like a normal app.
+
+1. Install **Termux** from F-Droid (the Play Store version is old). Optional: also **Termux:Boot** (starts the app after a restart) and **Termux:API**.
+2. In Termux:
+   ```bash
+   pkg install -y git
+   git clone https://github.com/sachingavalicoding/Testing-Project-.git stock-iq
+   cd stock-iq
+   bash termux/setup.sh      # installs Node and the server, makes .env
+   nano .env                 # set APP_PASSWORD, and FEED / Upstox keys (see below)
+   bash termux/start.sh      # runs it, restarts it if it stops, keeps the phone awake
+   ```
+3. Open **http://localhost:8080** in Chrome on the phone, log in, then menu **Add to Home screen**. It opens full screen with its own icon.
+4. Keep Termux alive: Android Settings > Apps > Termux > Battery > **Unrestricted**, and leave the notification Termux shows ("wake lock held") alone.
+5. Update later: `cd stock-iq && git pull && npm install -w server --omit=dev && bash termux/start.sh`.
+
+The phone gets the finished web app from the `app-build/` folder, so it never has to build it. If you change the web app on a computer, run `npm run build:mobile` and commit `app-build/`.
+
+Paper trading works from a phone. **Real orders need a fixed IP registered with Upstox**, which a phone on mobile data or home Wi-Fi does not have: use a server (below) for real money.
+
+## Run it on a computer
 Needs **Node 22.13 or newer** (uses Node's built-in SQLite, nothing to compile).
 
 ```bash
-cp .env.example .env        # fill your brother's Upstox API key/secret
+cp .env.example .env        # fill your Upstox API key/secret
 npm install
 npm run build               # builds the web app
 npm start                   # server + app on http://localhost:8080
@@ -66,6 +87,29 @@ npm start                   # server + app on http://localhost:8080
 - With `FEED=mock` you get fake prices: good for trying the app any time.
 - With `FEED=upstox`, open the app and tap **Login to Upstox** (once per day; Upstox tokens expire every night).
   In the Upstox developer app, the Redirect URL must be exactly the same as `UPSTOX_REDIRECT_URI`. The server answers on `/api/auth/upstox/callback` and on `/upstox/callback`, and `PORT` must match the port in that address (for `http://localhost:5000/upstox/callback` set `PORT=5000`).
+
+## Deploy it to a server
+The app needs a **always-on Node server with a disk** (it keeps candles and trades in SQLite and streams prices), so use a small VPS or a container host. Static hosts such as Vercel or Netlify do not fit.
+
+**Set `APP_PASSWORD` first.** Without it anyone who finds the address can press Buy and Kill All. With it, the whole API needs the login cookie. Use HTTPS, so the password is not sent in the clear.
+
+Good choices: a small VPS in **Mumbai** (AWS Lightsail, DigitalOcean, Hetzner, Oracle free tier). It has a fixed IP you can register with Upstox for real orders, and the lowest delay to the market.
+
+**Option A: plain Linux server (systemd + Caddy)**
+```bash
+sudo apt install -y nodejs git     # Node 22.13+ (use NodeSource if apt has an older one)
+sudo git clone https://github.com/sachingavalicoding/Testing-Project-.git /opt/stock-iq
+cd /opt/stock-iq && sudo cp .env.example .env && sudo nano .env
+sudo npm install -w server --omit=dev
+sudo cp deploy/stock-iq.service /etc/systemd/system/ && sudo systemctl enable --now stock-iq
+# HTTPS with a free certificate: install Caddy, put deploy/Caddyfile at /etc/caddy/Caddyfile with your domain, reload it
+```
+**Option B: Docker**
+```bash
+docker build -t stock-iq .
+docker run -d --name stock-iq --restart always -p 8080:8080 -v stock-iq-data:/data --env-file .env stock-iq
+```
+Set the Upstox redirect URL in .env and in the Upstox developer app to your HTTPS address (for example `https://stock.example.com/api/auth/upstox/callback`). Real orders also need the server's IP registered with Upstox and `REAL_TRADING_ENABLED=true`. Start with paper.
 
 Development: `npm run dev:server` and `npm run dev:client` (Vite on port 5180, proxies `/api`).
 
