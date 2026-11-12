@@ -93,6 +93,8 @@ The app needs a **always-on Node server with a disk** (it keeps candles and trad
 
 **Set `APP_PASSWORD` first.** Without it anyone who finds the address can press Buy and Kill All. With it, the whole API needs the login cookie. Use HTTPS, so the password is not sent in the clear.
 
+**Free option:** Oracle Cloud Always Free server in Mumbai, set up with one command. Simple steps: [deploy/FREE-HOSTING.md](deploy/FREE-HOSTING.md).
+
 Good choices: a small VPS in **Mumbai** (AWS Lightsail, DigitalOcean, Hetzner, Oracle free tier). It has a fixed IP you can register with Upstox for real orders, and the lowest delay to the market.
 
 **Option A: plain Linux server (systemd + Caddy)**
