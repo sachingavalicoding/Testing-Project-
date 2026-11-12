@@ -4,6 +4,9 @@ const API = 'https://api.upstox.com';
 const HFT = 'https://api-hft.upstox.com';
 const INSTRUMENTS_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz';
 
+/** logged_out: no token yet. ok: token in use. expired: Upstox rejected our token (401), log in again. */
+export type AuthState = 'logged_out' | 'ok' | 'expired';
+
 export class UpstoxError extends Error {
   constructor(message: string, readonly status: number, readonly body: unknown) {
     super(message);
@@ -21,12 +24,16 @@ export class UpstoxClient {
   private queue: Promise<unknown> = Promise.resolve();
   private lastCall = 0;
   private symbolToKey = new Map<string, string>();
+  authState: AuthState;
+  /** Called once when Upstox answers 401 (token expired or wrong). */
+  onUnauthorized: (() => void) | undefined;
 
   constructor(
     private readonly opts: { apiKey: string; apiSecret: string; redirectUri: string; accessToken?: string; minGapMs?: number },
     private readonly fetchFn: typeof fetch = fetch,
   ) {
     this.token = opts.accessToken ?? '';
+    this.authState = this.token ? 'ok' : 'logged_out';
   }
 
   get hasToken(): boolean {
@@ -35,6 +42,13 @@ export class UpstoxClient {
 
   setToken(token: string): void {
     this.token = token;
+    this.authState = token ? 'ok' : 'logged_out';
+  }
+
+  /** Upstox refused our token: forget it so we stop calling and the app asks for a new login. */
+  invalidate(): void {
+    this.token = '';
+    this.authState = 'expired';
   }
 
   loginUrl(): string {
@@ -57,7 +71,7 @@ export class UpstoxClient {
     });
     const json = (await res.json()) as { access_token?: string };
     if (!res.ok || !json.access_token) throw new UpstoxError('Upstox login failed', res.status, json);
-    this.token = json.access_token;
+    this.setToken(json.access_token);
     return json.access_token;
   }
 
@@ -121,8 +135,13 @@ export class UpstoxClient {
           continue;
         }
         const json = (await res.json().catch(() => null)) as { status?: string; data?: T; errors?: unknown } | null;
+        if (res.status === 401) {
+          this.invalidate();
+          this.onUnauthorized?.();
+        }
         if (!res.ok || json?.status === 'error') {
-          throw new UpstoxError(`Upstox ${method} ${new URL(url).pathname} failed (${res.status})`, res.status, json);
+          const detail = (json?.errors as Array<{ message?: string }> | undefined)?.[0]?.message;
+          throw new UpstoxError(`Upstox ${method} ${new URL(url).pathname} failed (${res.status})${detail ? `: ${detail}` : ''}`, res.status, json);
         }
         return json?.data as T;
       }

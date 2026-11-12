@@ -1,5 +1,5 @@
 import type { Candle, Quote } from '../types.ts';
-import type { UpstoxClient } from '../broker/upstoxClient.ts';
+import { UpstoxError, type UpstoxClient } from '../broker/upstoxClient.ts';
 import type { PriceFeed } from './feed.ts';
 
 interface FullQuote {
@@ -57,7 +57,7 @@ export class UpstoxFeed implements PriceFeed {
         onQuotes(quotes);
         this.lastError = undefined;
       } catch (err) {
-        this.lastError = (err as Error).message;
+        this.lastError = err instanceof UpstoxError && err.status === 401 ? 'Upstox login expired. Log in again.' : (err as Error).message;
       } finally {
         this.busy = false;
       }

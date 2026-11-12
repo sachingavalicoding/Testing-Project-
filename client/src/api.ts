@@ -30,6 +30,8 @@ export interface Status {
   feed?: string;
   feedError?: string;
   upstoxLoggedIn?: boolean;
+  upstoxState?: 'not_configured' | 'logged_out' | 'ok' | 'expired';
+  feedWanted?: 'upstox' | 'mock';
   realConfirmText?: string;
 }
 export interface Trade {
