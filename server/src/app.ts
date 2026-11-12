@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import type { Db } from './db/db.ts';
@@ -11,6 +11,7 @@ import type { AutoTrader } from './trading/autoTrader.ts';
 import { REAL_CONFIRM_TEXT, type ManualBuyRequest } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
 import type { UpstoxClient } from './broker/upstoxClient.ts';
+import { saveToken } from './broker/tokenStore.ts';
 import type { Candle, Mode } from './types.ts';
 import { qualityFor, type AppSettings } from './settings.ts';
 import type { NewsService } from './news/news.ts';
@@ -25,12 +26,19 @@ export interface AppDeps {
   trader: AutoTrader;
   feed: PriceFeed;
   upstox?: UpstoxClient;
+  /** What FEED= in .env asks for, so the app can say "keys missing" instead of silently showing fake prices. */
+  feedWanted?: 'upstox' | 'mock';
   universe: { readonly current: UniverseId; select(id: UniverseId): Promise<void> };
   settings: { get(): AppSettings; update(input: unknown): AppSettings };
   news?: NewsService;
   patterns: Pattern[];
   scanner?: ScannerService;
   clientDist?: string;
+}
+
+function page(title: string, text: string): string {
+  const esc = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string);
+  return `<h2>${esc(title)}</h2><p>${esc(text)}</p><p><a href="/">Back to Stock IQ</a></p>`;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -45,6 +53,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     feed: feed.name,
     feedError: (feed as { lastError?: string }).lastError,
     upstoxLoggedIn: upstox?.hasToken ?? false,
+    upstoxState: upstox ? upstox.authState : 'not_configured',
+    feedWanted: deps.feedWanted,
     realConfirmText: REAL_CONFIRM_TEXT,
   }));
 
@@ -267,23 +277,32 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     req.raw.on('close', () => clearInterval(t));
   });
 
-  // Upstox login (your brother logs in once a day; the token is kept only for that day).
+  // Upstox login (once a day: Upstox tokens stop working at 03:30 IST). The token is kept on the server only.
   app.get('/api/auth/upstox/login', async (_req, reply) => {
-    if (!upstox) return reply.code(400).send(fail('Upstox keys are not set in .env'));
+    if (!upstox) return reply.code(400).type('text/html').send(page('Upstox keys are not set', 'Put UPSTOX_API_KEY and UPSTOX_API_SECRET in your .env file, restart the server, then try again.'));
     return reply.redirect(upstox.loginUrl());
   });
 
-  app.get<{ Querystring: { code?: string } }>('/api/auth/upstox/callback', async (req, reply) => {
-    if (!upstox || !req.query.code) return reply.code(400).send(fail('Missing code'));
+  // Two paths on purpose: our own, and /upstox/callback, the address many Upstox apps already have registered.
+  const callbackPaths = ['/api/auth/upstox/callback', '/upstox/callback'];
+  const onCallback = async (req: FastifyRequest<{ Querystring: { code?: string; error?: string; error_description?: string } }>, reply: FastifyReply) => {
+    if (!upstox) return reply.code(400).type('text/html').send(page('Upstox keys are not set', 'Put UPSTOX_API_KEY and UPSTOX_API_SECRET in your .env file and restart the server.'));
+    if (!req.query.code) {
+      return reply.code(400).type('text/html').send(page('Upstox login was not completed', req.query.error_description ?? req.query.error ?? 'No login code came back from Upstox.'));
+    }
     try {
       const token = await upstox.exchangeCode(req.query.code);
-      db.setSetting('upstox_token', JSON.stringify({ token, day: istDate() }));
+      saveToken(db, token);
       db.log('info', 'Upstox login OK');
       return reply.redirect('/');
     } catch (e) {
-      return reply.code(400).send(fail((e as Error).message));
+      db.log('warn', `Upstox login failed: ${(e as Error).message}`);
+      return reply.code(400).type('text/html').send(
+        page('Upstox login failed', 'Check that UPSTOX_API_KEY and UPSTOX_API_SECRET are right and that the redirect URL in your Upstox app is exactly the same as UPSTOX_REDIRECT_URI in .env. Then try again.'),
+      );
     }
-  });
+  };
+  for (const path of callbackPaths) app.get(path, onCallback);
 
   if (!(deps.clientDist && existsSync(join(deps.clientDist, 'index.html')))) {
     // Friendly message instead of a raw 404 when the web app has not been built yet.

@@ -65,7 +65,7 @@ npm start                   # server + app on http://localhost:8080
 ```
 - With `FEED=mock` you get fake prices: good for trying the app any time.
 - With `FEED=upstox`, open the app and tap **Login to Upstox** (once per day; Upstox tokens expire every night).
-  In the Upstox developer app, set the redirect URL to the same value as `UPSTOX_REDIRECT_URI`.
+  In the Upstox developer app, the Redirect URL must be exactly the same as `UPSTOX_REDIRECT_URI`. The server answers on `/api/auth/upstox/callback` and on `/upstox/callback`, and `PORT` must match the port in that address (for `http://localhost:5000/upstox/callback` set `PORT=5000`).
 
 Development: `npm run dev:server` and `npm run dev:client` (Vite on port 5180, proxies `/api`).
 

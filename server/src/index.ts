@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.ts';
 import { PaperBroker } from './broker/paperBroker.ts';
 import { UpstoxBroker } from './broker/upstoxBroker.ts';
+import { clearToken, loadToken } from './broker/tokenStore.ts';
 import { UpstoxClient } from './broker/upstoxClient.ts';
 import { loadConfig } from './config.ts';
 import { Db } from './db/db.ts';
@@ -12,7 +13,6 @@ import { MarketStore } from './market/store.ts';
 import { seedHistory } from './market/seed.ts';
 import { loadDaily } from './scanner/daily.ts';
 import { ScannerService } from './scanner/service.ts';
-import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
 import { qualityFor, loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
 import { NewsService, shouldBlock } from './news/news.ts';
@@ -27,19 +27,14 @@ const store = new MarketStore();
 
 let upstox: UpstoxClient | undefined;
 if (config.upstox.apiKey) {
-  upstox = new UpstoxClient({
-    ...config.upstox,
-    onUnauthorized: () => {
-      db.setSetting('upstox_token', ''); // do not reload a dead token after a restart
-      db.log('warn', 'Upstox rejected the login token (expired or replaced). Log in to Upstox again.');
-    },
-  });
-  // Reuse today's token if the login already happened today.
-  const saved = db.getSetting('upstox_token');
-  if (!upstox.hasToken && saved) {
-    const { token, day } = JSON.parse(saved) as { token: string; day: string };
-    if (day === istDate()) upstox.setToken(token);
-  }
+  upstox = new UpstoxClient({ ...config.upstox });
+  // A token saved by the login button (still before its 03:30 IST expiry) wins over a token pasted in .env, which may be old.
+  const saved = loadToken(db);
+  if (saved) upstox.setToken(saved);
+  upstox.onUnauthorized = () => {
+    clearToken(db);
+    db.log('warn', 'Upstox rejected the login token (401). Log in again.');
+  };
 }
 
 let settings: AppSettings = loadSettings(db, defaultSettings(config));
@@ -150,7 +145,7 @@ const universeControl = {
   },
 };
 
-const app = await buildApp({ db, store, trader, feed, upstox, universe: universeControl,
+const app = await buildApp({ db, store, trader, feed, upstox, feedWanted: config.feed, universe: universeControl,
   settings: {
     get: () => settings,
     update(input: unknown) {

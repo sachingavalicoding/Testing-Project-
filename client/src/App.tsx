@@ -75,13 +75,7 @@ export default function App() {
       </header>
 
       {msg && <div className="mb-3 rounded bg-red-900/60 p-2 text-sm">{msg}</div>}
-      {meta && meta.feed === 'upstox' && !meta.upstoxLoggedIn && (
-        <a href="/api/auth/upstox/login" className="mb-3 flex items-center justify-between rounded-xl border border-violet-500/40 bg-violet-500/10 p-3 text-sm">
-          <span><b>Upstox login needed.</b> The price feed is stopped until you log in (once a day).</span>
-          <span className="rounded-lg bg-violet-600 px-3 py-1.5 font-semibold">Log in</span>
-        </a>
-      )}
-      {meta?.feedError && <div className="mb-3 rounded bg-amber-900/50 p-2 text-xs">Feed: {meta.feedError}</div>}
+      <UpstoxBanner meta={meta} />
 
       {tab === 'trade' && <Terminal symbol={symbol} setSymbol={setSymbol} status={s} />}
       {tab === 'auto' && s && <Home s={s} meta={meta} act={act} openChart={openChart} />}
@@ -138,6 +132,39 @@ function UniversePicker({ act, locked }: { act: (fn: () => Promise<unknown>) => 
   );
 }
 
+/** Tells you plainly when live prices are missing and why, with a button to fix it. */
+function UpstoxBanner({ meta }: { meta?: Status }) {
+  if (!meta) return null;
+  const state = meta.feedWanted === 'upstox' || meta.upstoxState === 'expired' ? meta.upstoxState : undefined;
+  const login = (
+    <a href="/api/auth/upstox/login" className="mt-2 inline-block rounded bg-violet-700 px-4 py-2 text-sm font-bold">Login with Upstox</a>
+  );
+  if (meta.feedWanted === 'upstox' && state === 'not_configured') {
+    return (
+      <div className="mb-3 rounded bg-amber-900/50 p-3 text-sm">
+        Upstox keys are missing, so you are seeing <b>fake prices</b>. Put UPSTOX_API_KEY and UPSTOX_API_SECRET in the .env file, then restart the server.
+      </div>
+    );
+  }
+  if (state === 'expired') {
+    return (
+      <div className="mb-3 rounded bg-red-900/60 p-3 text-sm">
+        <b>Your Upstox login expired.</b> Upstox logins end every day around 3:30 AM, so please log in again to get live prices.
+        <div>{login}</div>
+      </div>
+    );
+  }
+  if (state === 'logged_out') {
+    return (
+      <div className="mb-3 rounded bg-amber-900/50 p-3 text-sm">
+        Log in to Upstox to get live prices.
+        <div>{login}</div>
+      </div>
+    );
+  }
+  return meta.feedError ? <div className="mb-3 rounded bg-amber-900/50 p-2 text-xs">Feed: {meta.feedError}</div> : null;
+}
+
 function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn: () => Promise<unknown>) => void; openChart: (s: string) => void }) {
   const total = s.realizedToday + s.unrealized;
   const switchMode = () => {
@@ -189,8 +216,8 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
             Switch to {s.mode === 'real' ? 'paper' : 'real'}
           </button>
         </div>
-        {meta && !meta.upstoxLoggedIn && (
-          <a href="/api/auth/upstox/login" className="mt-3 block rounded-xl bg-violet-600 py-2.5 text-center text-sm font-semibold hover:bg-violet-500">Login to Upstox</a>
+        {meta && (meta.upstoxState === 'logged_out' || meta.upstoxState === 'expired') && (
+          <a href="/api/auth/upstox/login" className="mt-3 block rounded bg-violet-700 py-2 text-center text-sm">Login with Upstox</a>
         )}
       </section>
 
