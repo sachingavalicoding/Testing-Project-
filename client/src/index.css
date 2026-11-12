@@ -14,5 +14,16 @@
   --color-red-400: #ef5350;
 }
 
-body { font-family: ui-sans-serif, system-ui, sans-serif; background: #131722; color: #d1d4dc; }
+body {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: radial-gradient(1200px 500px at 50% -150px, #1c2540 0%, #131722 60%) no-repeat, #131722;
+  background-attachment: fixed;
+  color: #d1d4dc;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #363a45; border-radius: 8px; }
+button { transition: background-color .15s, color .15s, transform .05s; }
+button:active:not(:disabled) { transform: scale(.98); }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
 .num { font-variant-numeric: tabular-nums; }

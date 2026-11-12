@@ -18,6 +18,22 @@ export interface QualityRules {
   firstEntryMin: number;
   /** IST minutes since midnight: no new entries after this (too little time left) */
   lastEntryMinutes: number;
+  /** Pattern score needed (0 = off) */
+  minScore: number;
+  /** Signal candle volume vs the average of the 20 before it (0 = off) */
+  minVolumeRatio: number;
+  /** Stops tighter than this % are noise (0 = off) */
+  minStopPct: number;
+  /** Most % above EMA9 (below for a short) when buying (0 = off) */
+  maxStretchPct: number;
+  /** Last closed candle must close in the top (bottom) part of its range: 0.6 = top 40% (0 = off) */
+  candleStrength: number;
+  /** Room to today's high (low) must be at least this many times target 1 (0 = off) */
+  roomToTarget: number;
+  /** 1 = EMA21 must rise (fall) over the last 5 candles */
+  trendSlope: number;
+  /** Target 1 as a multiple of the risk, used for the room check (0 = no staged targets) */
+  t1: number;
 }
 
 export const defaultQuality: QualityRules = {
@@ -28,6 +44,14 @@ export const defaultQuality: QualityRules = {
   breadthMin: -0.3,
   firstEntryMin: 10,
   lastEntryMinutes: 14 * 60 + 30,
+  minScore: 0,
+  minVolumeRatio: 0,
+  minStopPct: 0,
+  maxStretchPct: 0,
+  candleStrength: 0,
+  roomToTarget: 0,
+  trendSlope: 0,
+  t1: 0,
 };
 
 /** Biggest stop distance (fraction) that still gives the wanted reward-to-risk for the target. */
@@ -82,9 +106,12 @@ export function qualityReject(q: Quote, candles: Candle[], s: Signal, r: Quality
   if (mins < MARKET_OPEN + r.firstEntryMin) return `first ${r.firstEntryMin} minutes are too jumpy`;
   if (mins > r.lastEntryMinutes) return 'too late in the day for a new entry';
 
+  if (r.minScore > 0 && s.score < r.minScore) return `score ${s.score} is below the minimum ${r.minScore}`;
+  if (r.minStopPct > 0 && s.stopPct * 100 < r.minStopPct) return `stop ${(s.stopPct * 100).toFixed(2)}% is tighter than ${r.minStopPct}% (normal price noise would hit it)`;
+
   const maxStop = maxStopFraction(r);
   if (s.stopPct > maxStop + 1e-9) {
-    return `stop ${(s.stopPct * 100).toFixed(2)}% is wider than allowed (${(maxStop * 100).toFixed(2)}% for a ${r.targetPct}% target, reward at least ${r.minRewardRisk}x risk)`;
+    return `stop ${(s.stopPct * 100).toFixed(2)}% is wider than allowed (${(maxStop * 100).toFixed(2)}%${r.targetPct > 0 ? ` for a ${r.targetPct}% target, reward at least ${r.minRewardRisk}x risk` : ': widest stop setting'})`;
   }
 
   const day = istDate(q.ts);
@@ -106,7 +133,40 @@ export function qualityReject(q: Quote, candles: Candle[], s: Signal, r: Quality
     const closes = done.map((c) => c.c);
     const n = closes.length - 1;
     const e9 = ema(closes, 9)[n];
-    const e21 = ema(closes, 21)[n];
+    const e21s = ema(closes, 21);
+    const e21 = e21s[n];
+    if (r.trendSlope > 0 && n >= 5) {
+      const rising = e21 > e21s[n - 5];
+      if (!short && !rising) return 'EMA21 is not rising: the trend is flat or turning down';
+      if (short && rising) return 'EMA21 is not falling: the trend is flat or turning up';
+    }
+    if (r.maxStretchPct > 0) {
+      const stretch = ((q.ltp - e9) / e9) * 100;
+      if (!short && stretch > r.maxStretchPct) return `price is ${stretch.toFixed(2)}% above EMA9 (chasing, limit ${r.maxStretchPct}%)`;
+      if (short && -stretch > r.maxStretchPct) return `price is ${(-stretch).toFixed(2)}% below EMA9 (chasing the fall, limit ${r.maxStretchPct}%)`;
+    }
+    if (r.minVolumeRatio > 0 && done.length >= 21) {
+      const last = done[done.length - 1];
+      const prior = done.slice(-21, -1);
+      const avg = prior.reduce((a, c) => a + c.v, 0) / prior.length;
+      if (avg > 0 && last.v < avg * r.minVolumeRatio) return `volume ${(last.v / avg).toFixed(1)}x the recent average, needs ${r.minVolumeRatio}x`;
+    }
+    if (r.candleStrength > 0) {
+      const last = done[done.length - 1];
+      const range = last.h - last.l;
+      if (range > 0) {
+        const pos = (last.c - last.l) / range; // 1 = closed at the high
+        if (!short && pos < r.candleStrength) return `signal candle closed weak (${Math.round(pos * 100)}% up its range, needs ${Math.round(r.candleStrength * 100)}%)`;
+        if (short && 1 - pos < r.candleStrength) return `signal candle closed weak for a short (${Math.round((1 - pos) * 100)}% down its range, needs ${Math.round(r.candleStrength * 100)}%)`;
+      }
+    }
+    if (r.roomToTarget > 0 && r.t1 > 0 && today.length > 0) {
+      const room1 = q.ltp * s.stopPct * r.t1; // distance to target 1
+      const dayHigh = Math.max(...today.map((c) => c.h));
+      const dayLow = Math.min(...today.map((c) => c.l));
+      if (!short && dayHigh > q.ltp && dayHigh - q.ltp < room1 * r.roomToTarget) return `today's high ${dayHigh} is too close to target 1 (no room to run)`;
+      if (short && dayLow < q.ltp && q.ltp - dayLow < room1 * r.roomToTarget) return `today's low ${dayLow} is too close to target 1 (no room to run)`;
+    }
     const strength = rsi(closes, 14);
     if (short) {
       if (!(e9 < e21)) return 'short-term trend is not down (EMA9 above EMA21)';

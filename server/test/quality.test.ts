@@ -161,3 +161,37 @@ describe('per-list target and stop settings', () => {
     expect(() => validateSettings(d)).toThrow(/stop loss/);
   });
 });
+
+describe('stricter entry checks', () => {
+  const up = Array.from({ length: 30 }, (_, i) => 100 + i * 0.03 + (i % 2 ? -0.04 : 0.04));
+  const sig = (stopPct: number, score = 80) => ({ pattern: 't', reason: 'r', stopPct, score });
+  const strict = { ...defaultQuality, enabled: true, minScore: 70, minStopPct: 0.25, maxStretchPct: 0.6, trendSlope: 1 };
+
+  it('rejects a weak score and a too-tight stop', () => {
+    expect(qualityReject(quote(100.95), build(up), sig(0.005, 60), strict)).toMatch(/below the minimum/);
+    expect(qualityReject(quote(100.95), build(up), sig(0.001), strict)).toMatch(/tighter than/);
+  });
+  it('rejects chasing far above EMA9', () => {
+    expect(qualityReject(quote(102), build(up), sig(0.005), { ...strict, maxStretchPct: 0.3 })).toMatch(/above EMA9|stretched/);
+  });
+  it('rejects thin volume on the signal candle', () => {
+    const cs = build(up, (i) => (i === up.length - 1 ? 500 : 1000));
+    expect(qualityReject(quote(100.95), cs, sig(0.005), { ...strict, minVolumeRatio: 1.3 })).toMatch(/volume/);
+  });
+  it('rejects when today\'s high leaves no room to target 1', () => {
+    const cs = build(up);
+    cs[10] = { ...cs[10], h: 101.1 };
+    expect(qualityReject(quote(100.95), cs, sig(0.005), { ...strict, roomToTarget: 1, t1: 1 })).toMatch(/no room/);
+  });
+  it('lets a clean setup through', () => {
+    expect(qualityReject(quote(100.95), build(up), sig(0.005), strict)).toBeUndefined();
+  });
+});
+
+describe('exit plan settings', () => {
+  it('defaults to staged targets and validates the order', () => {
+    const d = defaultSettings({ money: { maxDayMovePctByList: { large: 3, mid: 3, small: 3 }, riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 1000, capital: 50000 } } as never);
+    expect(d.exitPlan).toEqual({ enabled: true, t1: 1, t2: 1.5, t3: 2 });
+    expect(() => validateSettings({ ...d, exitPlan: { enabled: true, t1: 2, t2: 1.5, t3: 3 } })).toThrow(/go up/);
+  });
+});

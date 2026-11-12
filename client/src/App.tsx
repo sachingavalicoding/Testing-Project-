@@ -3,6 +3,7 @@ import Terminal from './Terminal.tsx';
 import Picks from './Picks.tsx';
 import Best from './Best.tsx';
 import Settings from './Settings.tsx';
+import PositionCard from './Positions.tsx';
 import { get, post, rupee, type EventRow, type Mover, type Status, type Trade } from './api.ts';
 
 type Tab = 'trade' | 'auto' | 'best' | 'picks' | 'movers' | 'report' | 'settings';
@@ -20,6 +21,11 @@ function useLive() {
   }, []);
   return { live, connected };
 }
+
+const NAV: [Tab, string, string][] = [
+  ['trade', '📈', 'Trade'], ['auto', '🤖', 'Auto'], ['best', '⭐', 'Best'], ['picks', '🎯', 'Picks'],
+  ['movers', '🔥', 'Movers'], ['report', '🧾', 'Report'], ['settings', '⚙️', 'Settings'],
+];
 
 const pnlColor = (n: number) => (n > 0 ? 'text-green-400' : n < 0 ? 'text-red-400' : 'text-slate-300');
 
@@ -45,19 +51,36 @@ export default function App() {
   const openChart = (sym: string) => { setSymbol(sym); setTab('trade'); };
 
   return (
-    <div className={`mx-auto p-2 pb-20 ${tab === 'trade' ? 'max-w-[1700px]' : 'max-w-3xl'}`}>
-      <header className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-bold">Stock IQ</h1>
+    <div className={`mx-auto p-3 pb-24 ${tab === 'trade' ? 'max-w-[1700px]' : 'max-w-3xl'}`}>
+      <header className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-indigo-600 text-sm font-black text-white shadow-lg shadow-sky-900/40">IQ</div>
+          <div>
+            <h1 className="text-lg font-extrabold leading-none tracking-tight">Stock <span className="text-sky-400">IQ</span></h1>
+            <div className="mt-0.5 text-[10px] uppercase tracking-widest text-slate-500">Intraday · Nifty 100</div>
+          </div>
+        </div>
         <div className="flex items-center gap-2 text-xs">
-          <span className={`rounded px-2 py-1 font-bold ${s?.mode === 'real' ? 'bg-red-600' : 'bg-sky-700'}`}>
+          <span className={`rounded-full px-3 py-1 font-bold tracking-wide ${s?.mode === 'real' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30'}`}>
             {s?.mode === 'real' ? 'REAL MONEY' : 'PAPER'}
           </span>
-          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} title={connected ? 'Live' : 'Offline'} />
-          <span className="text-slate-400">{meta?.feed ?? ''}</span>
+          <span className="flex items-center gap-1.5 rounded-full bg-slate-900 px-2.5 py-1 text-slate-400">
+            <span className="relative flex h-2 w-2">
+              {connected && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />}
+              <span className={`relative inline-flex h-2 w-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-500'}`} />
+            </span>
+            {connected ? 'Live' : 'Offline'}{meta?.feed ? ` · ${meta.feed}` : ''}
+          </span>
         </div>
       </header>
 
       {msg && <div className="mb-3 rounded bg-red-900/60 p-2 text-sm">{msg}</div>}
+      {meta && meta.feed === 'upstox' && !meta.upstoxLoggedIn && (
+        <a href="/api/auth/upstox/login" className="mb-3 flex items-center justify-between rounded-xl border border-violet-500/40 bg-violet-500/10 p-3 text-sm">
+          <span><b>Upstox login needed.</b> The price feed is stopped until you log in (once a day).</span>
+          <span className="rounded-lg bg-violet-600 px-3 py-1.5 font-semibold">Log in</span>
+        </a>
+      )}
       {meta?.feedError && <div className="mb-3 rounded bg-amber-900/50 p-2 text-xs">Feed: {meta.feedError}</div>}
 
       {tab === 'trade' && <Terminal symbol={symbol} setSymbol={setSymbol} status={s} />}
@@ -75,10 +98,14 @@ export default function App() {
       )}
       {!s && tab === 'auto' && <p className="text-slate-400">Connecting to server…</p>}
 
-      <nav className="fixed inset-x-0 bottom-0 flex border-t border-slate-800 bg-slate-950">
-        {(['trade', 'auto', 'best', 'picks', 'movers', 'report', 'settings'] as Tab[]).map((t) => (
+      <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-slate-800 bg-slate-950/90 backdrop-blur">
+        {NAV.map(([t, icon, label]) => (
           <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-xs capitalize ${tab === t ? 'text-sky-400' : 'text-slate-400'}`}>{t}</button>
+            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === t ? 'text-sky-400' : 'text-slate-500 hover:text-slate-300'}`}>
+            {tab === t && <span className="absolute inset-x-6 top-0 h-0.5 rounded-b bg-sky-400" />}
+            <span className="text-base leading-none">{icon}</span>
+            {label}
+          </button>
         ))}
       </nav>
     </div>
@@ -94,7 +121,7 @@ function UniversePicker({ act, locked }: { act: (fn: () => Promise<unknown>) => 
   if (!u) return null;
   const warning = u.options.find((o) => o.id === u.current)?.warning;
   return (
-    <section className="rounded-lg bg-slate-900 p-3">
+    <section className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
       <div className="mb-2 font-semibold">Share list (100 shares at a time)</div>
       <div className="grid grid-cols-3 gap-2">
         {u.options.map((o) => (
@@ -121,26 +148,34 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
   };
   return (
     <div className="space-y-3">
-      <section className="grid grid-cols-3 gap-2 text-center">
-        <Stat label="Today P&L" value={rupee(total)} cls={pnlColor(total)} />
-        <Stat label="Booked" value={rupee(s.realizedToday)} cls={pnlColor(s.realizedToday)} />
-        <Stat label="Free cash" value={rupee(s.freeCash)} />
+      <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-4">
+        <div className={`pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full blur-3xl ${total >= 0 ? 'bg-green-400/15' : 'bg-red-400/15'}`} />
+        <div className="text-xs uppercase tracking-widest text-slate-500">Today's P&amp;L</div>
+        <div className={`num mt-1 text-4xl font-extrabold tracking-tight ${pnlColor(total)}`}>{total > 0 ? '+' : ''}{rupee(total)}</div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+          <Stat label="Booked" value={rupee(s.realizedToday)} cls={pnlColor(s.realizedToday)} />
+          <Stat label="Open" value={rupee(s.unrealized)} cls={pnlColor(s.unrealized)} />
+          <Stat label="Free cash" value={rupee(s.freeCash)} />
+        </div>
       </section>
 
-      <section className="rounded-lg bg-slate-900 p-3">
-        <div className="mb-2 flex items-center justify-between">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+        <div className="mb-3 flex items-center justify-between">
           <span className="font-semibold">Auto trading</span>
-          <span className={s.running ? 'text-green-400' : 'text-slate-400'}>{s.running ? 'Running' : 'Stopped'}</span>
+          <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.running ? 'bg-green-400/15 text-green-400' : 'bg-slate-800 text-slate-400'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${s.running ? 'animate-pulse bg-green-400' : 'bg-slate-500'}`} />
+            {s.running ? 'Running' : 'Stopped'}
+          </span>
         </div>
-        {s.haltedReason && <p className="mb-2 text-sm text-amber-400">Stopped for today: {s.haltedReason}</p>}
+        {s.haltedReason && <p className="mb-3 rounded-lg bg-amber-500/10 p-2 text-sm text-amber-400">Stopped for today: {s.haltedReason}</p>}
         <div className="grid grid-cols-2 gap-2">
           {s.running ? (
-            <button className="rounded bg-slate-700 py-2" onClick={() => act(() => post('/api/auto/stop'))}>Stop</button>
+            <button className="rounded-xl bg-slate-800 py-2.5 font-semibold hover:bg-slate-700" onClick={() => act(() => post('/api/auto/stop'))}>Stop</button>
           ) : (
-            <button className="rounded bg-green-700 py-2 disabled:opacity-40" disabled={!!s.haltedReason}
+            <button className="rounded-xl bg-green-600 py-2.5 font-semibold shadow-lg shadow-green-900/30 hover:bg-green-500 disabled:opacity-40" disabled={!!s.haltedReason}
               onClick={() => act(() => post('/api/auto/start'))}>Start {s.mode}</button>
           )}
-          <button className="rounded bg-red-700 py-2 font-bold"
+          <button className="rounded-xl bg-red-500/90 py-2.5 font-bold hover:bg-red-500"
             onClick={() => window.confirm('Sell ALL positions now and stop auto trading? You can press Start again any time.') && act(() => post('/api/kill-all'))}>
             KILL ALL
           </button>
@@ -149,37 +184,33 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
           <span className="text-slate-400">
             Real money: {s.realAllowed ? 'unlocked on server' : 'locked (server .env)'}
           </span>
-          <button className="rounded bg-slate-800 px-3 py-1 disabled:opacity-40" disabled={!s.realAllowed && s.mode === 'paper'}
+          <button className="rounded-lg bg-slate-800 px-3 py-1 text-xs hover:bg-slate-700 disabled:opacity-40" disabled={!s.realAllowed && s.mode === 'paper'}
             onClick={switchMode}>
             Switch to {s.mode === 'real' ? 'paper' : 'real'}
           </button>
         </div>
         {meta && !meta.upstoxLoggedIn && (
-          <a href="/api/auth/upstox/login" className="mt-3 block rounded bg-violet-700 py-2 text-center text-sm">Login to Upstox</a>
+          <a href="/api/auth/upstox/login" className="mt-3 block rounded-xl bg-violet-600 py-2.5 text-center text-sm font-semibold hover:bg-violet-500">Login to Upstox</a>
         )}
       </section>
 
       <UniversePicker act={act} locked={s.positions.length > 0} />
 
-      <section className="rounded-lg bg-slate-900 p-3">
-        <h2 className="mb-2 font-semibold">Open positions ({s.positions.length}/{s.rules.maxOpenPositions})</h2>
-        {s.positions.length === 0 && <p className="text-sm text-slate-400">None</p>}
-        {s.positions.map((p) => (
-          <div key={p.symbol} className="border-t border-slate-800 py-2 text-sm" onClick={() => openChart(p.symbol)}>
-            <div className="flex justify-between">
-              <span className="font-semibold">{p.symbol} × {p.qty} {p.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>}</span>
-              <span className={`num ${pnlColor(p.pnl)}`}>{rupee(p.pnl)}</span>
-            </div>
-            <div className="num flex justify-between text-slate-400">
-              <span>In {p.entry}{p.estimated ? '*' : ''} · Now {p.ltp}</span>
-              <span>Stop {p.stop}</span>
-            </div>
-            <div className="text-xs text-slate-500">{p.pattern}: {p.reason}</div>
-          </div>
-        ))}
+      <section>
+        <div className="mb-2 flex items-center justify-between px-1">
+          <h2 className="font-semibold">Open positions</h2>
+          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">{s.positions.length}/{s.rules.maxOpenPositions}</span>
+        </div>
+        {s.positions.length === 0 && <p className="rounded-xl border border-dashed border-slate-800 p-6 text-center text-sm text-slate-500">No open positions. The bot only buys when every entry check passes.</p>}
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          {s.positions.map((p) => (
+            <PositionCard key={p.symbol} p={p} real={s.mode === 'real'} onOpen={() => openChart(p.symbol)}
+              onClose={() => act(() => post(`/api/positions/${encodeURIComponent(p.symbol)}/close`))} />
+          ))}
+        </div>
       </section>
 
-      <section className="rounded-lg bg-slate-900 p-3 text-xs text-slate-400">
+      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-500">
         Rules: capital {rupee(s.rules.capital)} · risk/trade {rupee(s.rules.riskPerTrade)} · daily loss cap {rupee(s.rules.dailyLossCap)} ·
         max {s.rules.maxOpenPositions} open · skip if moved &gt; {s.rules.maxDayMovePct}% · square-off {s.rules.squareOffTime}
       </section>
@@ -189,16 +220,16 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
 
 function Stat({ label, value, cls = '' }: { label: string; value: string; cls?: string }) {
   return (
-    <div className="rounded-lg bg-slate-900 p-2">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className={`num font-semibold ${cls}`}>{value}</div>
+    <div className="rounded-xl bg-slate-950/60 p-2.5 ring-1 ring-slate-800">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className={`num mt-0.5 text-sm font-bold ${cls}`}>{value}</div>
     </div>
   );
 }
 
 function Movers({ movers, onPick }: { movers: { gainers: Mover[]; losers: Mover[] }; onPick: (s: string) => void }) {
   const table = (title: string, rows: Mover[]) => (
-    <section className="rounded-lg bg-slate-900 p-3">
+    <section className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
       <h2 className="mb-2 font-semibold">{title}</h2>
       <table className="num w-full text-sm">
         <tbody>
@@ -232,7 +263,7 @@ function Trades() {
         <Stat label="Net" value={rupee(report.net)} cls={pnlColor(report.net)} />
         <Stat label="Charges" value={rupee(report.charges)} />
       </section>
-      <section className="rounded-lg bg-slate-900 p-3">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
         <h2 className="mb-2 font-semibold">Today's report: why each trade fired</h2>
         {report.trades.length === 0 && <p className="text-sm text-slate-400">No trades yet today.</p>}
         {report.trades.map((t) => (
@@ -260,7 +291,7 @@ function Log() {
     return () => clearInterval(t);
   }, []);
   return (
-    <section className="space-y-1 rounded-lg bg-slate-900 p-3 text-xs">
+    <section className="space-y-1 rounded-2xl border border-slate-800 bg-slate-900 p-3 text-xs">
       {rows.map((r) => (
         <div key={r.id} className={r.level === 'error' ? 'text-red-400' : r.level === 'warn' ? 'text-amber-400' : 'text-slate-300'}>
           <span className="text-slate-500">{new Date(r.ts).toLocaleTimeString('en-IN')}</span> {r.message}

@@ -18,9 +18,9 @@ export interface ListRules {
 
 /** Starting target / stop per list: bigger moves and noise in mid and small caps need more room. */
 export const LIST_TARGETS: Record<UniverseId, { targetPct: number; stopLossPct: number }> = {
-  large: { targetPct: 1, stopLossPct: 0.6 },
-  mid: { targetPct: 1.5, stopLossPct: 0.9 },
-  small: { targetPct: 2.5, stopLossPct: 1.5 },
+  large: { targetPct: 1, stopLossPct: 1 },
+  mid: { targetPct: 1.5, stopLossPct: 1.5 },
+  small: { targetPct: 2.5, stopLossPct: 2 },
 };
 
 export interface AppSettings {
@@ -42,9 +42,37 @@ export interface AppSettings {
   minRewardRisk: number;
   /** Intraday short selling (sell first, buy back later). Paper only, off by default */
   shortSelling: boolean;
+  /** Three close targets from the calculated stop (multiples of the risk). Target 1: stop to break-even. Target 2: stop to target 1. Target 3: sell */
+  exitPlan: { enabled: boolean; t1: number; t2: number; t3: number };
+  /** Every new auto trade gets at least this wide a stop, % below the entry (above for a short). Tight stops get hit by normal noise */
+  minStopWidthPct: number;
+  /** Stricter entry checks. Each one is a number; 0 turns that check off */
+  entryChecks: EntryChecks;
   /** The "Best trades now" scanner (off by default) */
   scanner: ScannerSettings;
 }
+
+export interface EntryChecks {
+  /** Pattern score needed (0-100) */
+  minScore: number;
+  /** The signal candle's volume must be this many times the recent average */
+  minVolumeRatio: number;
+  /** Stops tighter than this % are noise: skip */
+  minStopPct: number;
+  /** Do not buy more than this % above EMA9 (chasing) */
+  maxStretchPct: number;
+  /** The signal candle must close in the top (bottom for a short) part of its range, 0-1 (0.6 = top 40%) */
+  candleStrength: number;
+  /** Skip when today's high (low for a short) is closer than this many times target 1: no room to run */
+  roomToTarget: number;
+  /** EMA21 must be rising (falling for a short) over the last 5 candles: 1 = on, 0 = off */
+  trendSlope: number;
+}
+
+export const defaultEntryChecks: EntryChecks = { minScore: 70, minVolumeRatio: 1.3, minStopPct: 0.25, maxStretchPct: 0.6, candleStrength: 0.6, roomToTarget: 0.8, trendSlope: 1 };
+
+/** Target % used for auto entries: none while the staged targets are on (they come from each trade's own stop). */
+export const effectiveTargetPct = (s: AppSettings, id: UniverseId): number => (s.exitPlan.enabled ? 0 : s.lists[id].targetPct);
 
 export function defaultSettings(c: Config): AppSettings {
   const m = c.money;
@@ -63,6 +91,9 @@ export function defaultSettings(c: Config): AppSettings {
     qualityGate: true,
     minRewardRisk: 1.5,
     shortSelling: false,
+    exitPlan: { enabled: true, t1: 1, t2: 1.5, t3: 2 },
+    minStopWidthPct: 0.6,
+    entryChecks: { ...defaultEntryChecks },
     scanner: { ...defaultScanner, riskPerTrade: m.riskPerTrade },
   };
 }
@@ -107,7 +138,36 @@ export function validateSettings(input: unknown): AppSettings {
     qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
     minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
     shortSelling: bool('short selling', s.shortSelling, false),
+    exitPlan: validateExitPlan(s.exitPlan),
+    minStopWidthPct: num('minimum stop width %', s.minStopWidthPct, 0.6, 0.1, 5),
+    entryChecks: validateEntryChecks(s.entryChecks),
     scanner: validateScanner(s.scanner),
+  };
+}
+
+function validateExitPlan(input: unknown): AppSettings['exitPlan'] {
+  const l = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const out = {
+    enabled: bool('staged targets on/off', l.enabled, true),
+    t1: num('target 1 (x risk)', l.t1, 1, 0.5, 5),
+    t2: num('target 2 (x risk)', l.t2, 1.5, 0.5, 8),
+    t3: num('target 3 (x risk)', l.t3, 2, 0.5, 10),
+  };
+  if (!(out.t1 < out.t2 && out.t2 < out.t3)) throw new Error('Targets must go up: target 1 < target 2 < target 3');
+  return out;
+}
+
+function validateEntryChecks(input: unknown): EntryChecks {
+  const l = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const d = defaultEntryChecks;
+  return {
+    minScore: num('minimum score', l.minScore, d.minScore, 0, 100),
+    minVolumeRatio: num('volume vs average', l.minVolumeRatio, d.minVolumeRatio, 0, 10),
+    minStopPct: num('smallest stop %', l.minStopPct, d.minStopPct, 0, 3),
+    maxStretchPct: num('most above EMA9 %', l.maxStretchPct, d.maxStretchPct, 0, 5),
+    candleStrength: num('candle strength', l.candleStrength, d.candleStrength, 0, 0.95),
+    roomToTarget: num('room to target 1', l.roomToTarget, d.roomToTarget, 0, 5),
+    trendSlope: num('trend slope check', l.trendSlope, d.trendSlope, 0, 1, true),
   };
 }
 

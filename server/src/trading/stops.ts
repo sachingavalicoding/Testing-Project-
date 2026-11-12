@@ -68,3 +68,60 @@ export function ladderStopShort(entry: number, qty: number, lowest: number, curr
   }
   return Math.min(currentStop, target);
 }
+
+/** How far the three targets sit from the entry, as multiples of the risk (entry to stop distance). */
+export interface TargetPlan {
+  t1: number;
+  t2: number;
+  t3: number;
+}
+
+/** Prices of target 1, 2 and 3 for a trade: `risk * multiple` above the entry (below it for a short). */
+export function buildTargets(entry: number, stop: number, side: 'long' | 'short', plan: TargetPlan): number[] {
+  const risk = Math.abs(entry - stop);
+  return [plan.t1, plan.t2, plan.t3].map((m) =>
+    side === 'short' ? roundToTick(entry - risk * m, 'down') : roundToTick(entry + risk * m, 'up'),
+  );
+}
+
+export interface StageResult {
+  /** Targets reached so far (0 to targets.length) */
+  stage: number;
+  stop: number;
+  /** True when the last target was reached: sell everything */
+  done: boolean;
+}
+
+/**
+ * Staged targets with a trailing stop, for one position.
+ * - Target 1 reached: the stop moves to break-even (charges included), so the trade can no longer lose.
+ * - Target 2 reached: the stop moves up to target 1.
+ * - Target 3 reached: sell everything.
+ * The stop never moves the wrong way.
+ */
+export function advanceTargets(
+  side: 'long' | 'short',
+  entry: number,
+  qty: number,
+  ltp: number,
+  targets: number[],
+  stage: number,
+  stop: number,
+): StageResult {
+  const short = side === 'short';
+  let st = stage;
+  let nextStop = stop;
+  while (st < targets.length && (short ? ltp <= targets[st] : ltp >= targets[st])) {
+    st++;
+    let lock: number;
+    if (st === 1) {
+      lock = entry;
+      if (short) while (netPnl(lock, entry, qty) < 0) lock = roundToTick(lock - TICK);
+      else while (netPnl(entry, lock, qty) < 0) lock = roundToTick(lock + TICK);
+    } else {
+      lock = targets[st - 2];
+    }
+    nextStop = short ? Math.min(nextStop, lock) : Math.max(nextStop, lock);
+  }
+  return { stage: st, stop: nextStop, done: st >= targets.length };
+}

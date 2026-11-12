@@ -23,7 +23,7 @@ export class UpstoxClient {
   private symbolToKey = new Map<string, string>();
 
   constructor(
-    private readonly opts: { apiKey: string; apiSecret: string; redirectUri: string; accessToken?: string; minGapMs?: number },
+    private readonly opts: { apiKey: string; apiSecret: string; redirectUri: string; accessToken?: string; minGapMs?: number; onUnauthorized?: () => void },
     private readonly fetchFn: typeof fetch = fetch,
   ) {
     this.token = opts.accessToken ?? '';
@@ -121,6 +121,13 @@ export class UpstoxClient {
           continue;
         }
         const json = (await res.json().catch(() => null)) as { status?: string; data?: T; errors?: unknown } | null;
+        if (res.status === 401) {
+          // The token is expired or was replaced by a newer login: forget it so the app asks for a login again.
+          const had = this.token !== '';
+          this.token = '';
+          if (had) this.opts.onUnauthorized?.();
+          throw new UpstoxError('Upstox login expired or replaced (401): log in to Upstox again', 401, json);
+        }
         if (!res.ok || json?.status === 'error') {
           throw new UpstoxError(`Upstox ${method} ${new URL(url).pathname} failed (${res.status})`, res.status, json);
         }

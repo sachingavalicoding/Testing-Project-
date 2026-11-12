@@ -52,6 +52,7 @@ export default function Settings() {
   const sc = s.scanner;
   const setSc = (patch: Partial<ScannerSettings>) => setS({ ...s, scanner: { ...sc, ...patch } });
   const setList = (cap: Cap, patch: Partial<ListRules>) => setS({ ...s, lists: { ...s.lists, [cap]: { ...s.lists[cap], ...patch } } });
+  const setEc = (patch: Partial<AppSettings["entryChecks"]>) => setS({ ...s, entryChecks: { ...s.entryChecks, ...patch } });
 
   const save = async () => {
     const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) });
@@ -109,6 +110,30 @@ export default function Settings() {
         </label>
         <Field label="Reward to risk (times)" hint="The target must be at least this many times the stop distance, otherwise the trade is skipped" step={0.25}
           value={s.minRewardRisk} onChange={(n) => setS({ ...s, minRewardRisk: n })} />
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+        <h2 className="mb-1 font-semibold">Stop loss and 3 close targets</h2>
+        <Toggle label="Use calculated stop + targets 1, 2, 3" hint="Every auto trade gets its stop from the chart and three targets close to the entry, measured in times the risk (entry to stop). Target 1: stop moves to break-even, so the trade can no longer lose. Target 2: stop moves to target 1. Target 3: sell everything" value={s.exitPlan.enabled} onChange={(b) => setS({ ...s, exitPlan: { ...s.exitPlan, enabled: b } })} />
+        <Field label="Minimum stop width (%)" hint="Every new trade gets at least this wide a stop below the entry, so normal price noise does not knock it out. The targets are measured from this stop, so a wider stop means bigger targets too. Keep it at or below Widest stop loss" step={0.1}
+          value={s.minStopWidthPct} onChange={(n) => setS({ ...s, minStopWidthPct: n })} />
+        <Field label="Target 1 (times the risk)" hint="1 = as far above the entry as the stop is below it" step={0.25}
+          value={s.exitPlan.t1} onChange={(n) => setS({ ...s, exitPlan: { ...s.exitPlan, t1: n } })} />
+        <Field label="Target 2 (times the risk)" hint="Must be bigger than target 1" step={0.25}
+          value={s.exitPlan.t2} onChange={(n) => setS({ ...s, exitPlan: { ...s.exitPlan, t2: n } })} />
+        <Field label="Target 3 (times the risk)" hint="Last target: the trade is sold here. Keep it close so it can really be hit" step={0.25}
+          value={s.exitPlan.t3} onChange={(n) => setS({ ...s, exitPlan: { ...s.exitPlan, t3: n } })} />
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+        <h2 className="mb-1 font-semibold">Entry checks <span className="text-xs font-normal text-slate-500">(only the best setups pass; 0 turns a check off)</span></h2>
+        <Field label="Minimum pattern score" hint="Out of 100. Most good entries score 80 or more" value={s.entryChecks.minScore} onChange={(n) => setEc({ minScore: n })} />
+        <Field label="Volume vs recent average (times)" hint="The signal candle must trade at least this many times the average of the 20 candles before it" step={0.1} value={s.entryChecks.minVolumeRatio} onChange={(n) => setEc({ minVolumeRatio: n })} />
+        <Field label="Smallest stop (%)" hint="A stop tighter than this gets hit by normal noise" step={0.05} value={s.entryChecks.minStopPct} onChange={(n) => setEc({ minStopPct: n })} />
+        <Field label="Most above EMA9 (%)" hint="Do not chase: skip when price is already this far above the 9-candle average (below it for a short)" step={0.1} value={s.entryChecks.maxStretchPct} onChange={(n) => setEc({ maxStretchPct: n })} />
+        <Field label="Signal candle strength (0 to 0.95)" hint="0.6 = the candle must close in the top 40% of its range (bottom 40% for a short)" step={0.05} value={s.entryChecks.candleStrength} onChange={(n) => setEc({ candleStrength: n })} />
+        <Field label="Room to target 1 (times)" hint="Skip when today's high is closer than this many times target 1: the price would hit a wall" step={0.1} value={s.entryChecks.roomToTarget} onChange={(n) => setEc({ roomToTarget: n })} />
+        <Toggle label="EMA21 must be sloping the right way" hint="Rising for a buy, falling for a short, over the last 5 candles" value={s.entryChecks.trendSlope === 1} onChange={(b) => setEc({ trendSlope: b ? 1 : 0 })} />
       </section>
 
       <section className="rounded-lg bg-slate-900 p-3">

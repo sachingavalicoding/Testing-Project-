@@ -81,3 +81,32 @@ describe('stops', () => {
     expect(ladderStop(1000, 20, 1006, 1010, { stepPct: 0.5 })).toBe(1010);
   });
 });
+
+import { advanceTargets, buildTargets } from '../src/trading/stops.ts';
+describe('staged targets', () => {
+  const plan = { t1: 1, t2: 1.5, t3: 2 };
+  it('builds targets from the stop distance', () => {
+    expect(buildTargets(1000, 990, 'long', plan)).toEqual([1010, 1015, 1020]);
+    expect(buildTargets(1000, 1010, 'short', plan)).toEqual([990, 985, 980]);
+  });
+  it('long: target 1 -> break-even, target 2 -> target 1, target 3 -> done', () => {
+    const t = [1010, 1015, 1020];
+    expect(advanceTargets('long', 1000, 100, 1005, t, 0, 990)).toEqual({ stage: 0, stop: 990, done: false });
+    const a = advanceTargets('long', 1000, 100, 1010, t, 0, 990);
+    expect(a.stage).toBe(1);
+    expect(a.stop).toBeGreaterThanOrEqual(1000);
+    expect(netPnl(1000, a.stop, 100)).toBeGreaterThanOrEqual(0);
+    const b = advanceTargets('long', 1000, 100, 1015, t, a.stage, a.stop);
+    expect(b).toEqual({ stage: 2, stop: 1010, done: false });
+    expect(advanceTargets('long', 1000, 100, 1020, t, b.stage, b.stop).done).toBe(true);
+    expect(advanceTargets('long', 1000, 100, 1030, t, 0, 990).done).toBe(true); // gap straight to the last one
+  });
+  it('short: mirror', () => {
+    const t = [990, 985, 980];
+    const a = advanceTargets('short', 1000, 100, 990, t, 0, 1010);
+    expect(a.stage).toBe(1);
+    expect(netPnl(a.stop, 1000, 100)).toBeGreaterThanOrEqual(0);
+    expect(advanceTargets('short', 1000, 100, 985, t, a.stage, a.stop)).toEqual({ stage: 2, stop: 990, done: false });
+    expect(advanceTargets('short', 1000, 100, 979, t, 0, 1010).done).toBe(true);
+  });
+});

@@ -8,7 +8,7 @@ import { positionSize } from './sizing.ts';
 import { vwap } from './indicators.ts';
 import { randomUUID } from 'node:crypto';
 import { roundToTick } from './ticks.ts';
-import { initialStop, initialStopShort, ladderStop, ladderStopShort, type LadderRule } from './stops.ts';
+import { initialStop, initialStopShort, ladderStop, ladderStopShort, advanceTargets, buildTargets, type LadderRule, type TargetPlan } from './stops.ts';
 import { chargesFor, grossPnl, netPnlFor, sideOf, type Side } from './pnl.ts';
 import { defaultQuality, marketBlocksSide, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
 
@@ -29,6 +29,10 @@ export interface Position {
   estimated: boolean;
   /** Sell automatically when price reaches this (manual buys only) */
   target?: number;
+  /** Auto entries: prices of target 1, 2 and 3. Target 1 moves the stop to break-even, target 2 to target 1, target 3 sells. */
+  targets?: number[];
+  /** How many of `targets` have been reached */
+  stage?: number;
   /** The stop the position started with: 1R (the planned risk) is the distance from the entry to it */
   stop0?: number;
   /** 'short' = sold first, to be bought back later (intraday). Missing means long (older saved positions). */
@@ -188,6 +192,12 @@ export class AutoTrader {
 
   /** Entry quality checks and the automatic profit target (set from the settings page). */
   quality: QualityRules = { ...defaultQuality };
+
+  /** Smallest stop width for new auto entries, % (set from settings). 0 = use the pattern's own stop */
+  minStopWidthPct = 0;
+
+  /** Three staged targets (set from settings). When set, new auto entries get target 1, 2, 3 and a trailing stop. */
+  targetPlan?: TargetPlan;
 
   setMode(mode: Mode, confirm?: string): void {
     if (mode === this.mode) return;
@@ -475,8 +485,13 @@ export class AutoTrader {
       if (!q) continue;
       if (sideOf(p) === 'short') {
         // A short profits when price falls: the stop is ABOVE the entry and follows the lowest price down.
-        if (q.ltp < p.highest) {
-          p.highest = q.ltp;
+        if (q.ltp < p.highest) p.highest = q.ltp;
+        if (p.targets) {
+          if (this.stageUp(p, q.ltp)) {
+            await this.exit(p, `Target ${p.targets.length} hit at ${q.ltp} (all targets reached)`);
+            continue;
+          }
+        } else if (q.ltp <= p.highest) {
           const next = ladderStopShort(p.entry, p.qty, p.highest, p.stop, this.d.ladder ?? { stepPct: 0.5 });
           if (next < p.stop) {
             this.d.db.log('info', `${p.symbol} (short) stop moved down ${p.stop} → ${next}`);
@@ -488,8 +503,13 @@ export class AutoTrader {
         else if (p.target && q.ltp <= p.target) await this.exit(p, `Target hit at ${q.ltp} (target ${p.target})`);
         continue;
       }
-      if (q.ltp > p.highest) {
-        p.highest = q.ltp;
+      if (q.ltp > p.highest) p.highest = q.ltp;
+      if (p.targets) {
+        if (this.stageUp(p, q.ltp)) {
+          await this.exit(p, `Target ${p.targets.length} hit at ${q.ltp} (all targets reached)`);
+          continue;
+        }
+      } else if (q.ltp >= p.highest) {
         const next = ladderStop(p.entry, p.qty, p.highest, p.stop, this.d.ladder ?? { stepPct: 0.5 });
         if (next > p.stop) {
           this.d.db.log('info', `${p.symbol} stop moved up ${p.stop} → ${next}`);
@@ -504,6 +524,19 @@ export class AutoTrader {
     if (!this.haltedReason && this.realizedToday + this.unrealized() <= -this.rules.dailyLossCap) {
       await this.killAllNow(`Daily loss cap ₹${this.rules.dailyLossCap} reached`);
     }
+  }
+
+  /** Moves a position with staged targets up a stage when price reaches the next target. True = the last target was hit. */
+  private stageUp(p: Position, ltp: number): boolean {
+    const r = advanceTargets(sideOf(p), p.entry, p.qty, ltp, p.targets!, p.stage ?? 0, p.stop);
+    if (r.stage !== (p.stage ?? 0)) {
+      const note = r.stage === 1 ? 'stop to break-even' : r.stage < p.targets!.length ? `stop to target ${r.stage - 1}` : 'last target';
+      this.d.db.log('info', `${p.symbol} target ${r.stage} hit at ${ltp} → ${note}${r.stop !== p.stop ? ` (stop ${p.stop} → ${r.stop})` : ''}`);
+      p.stage = r.stage;
+      p.stop = r.stop;
+      this.persist(p);
+    }
+    return r.done;
   }
 
   private async lookForEntries(quotes: Quote[]): Promise<void> {
@@ -601,6 +634,7 @@ export class AutoTrader {
   private async enter(q: Quote, s: Signal): Promise<void> {
     const side: Side = s.side ?? 'long';
     const short = side === 'short';
+    const stopPct = Math.max(s.stopPct, this.minStopWidthPct / 100); // a wider stop than the pattern's own, so normal noise does not hit it
     const broker = this.broker;
     // Ask the broker for the real MIS margin for one share first, then size.
     const probe = await broker.getMargin(q.symbol, 1, q.ltp);
@@ -609,7 +643,7 @@ export class AutoTrader {
       freeCash: this.freeCash,
       marginPerShare: probe.marginPerShare,
       riskPerTrade: this.rules.riskPerTrade,
-      stopPct: s.stopPct,
+      stopPct,
       capitalPerTrade: this.capitalPerTrade,
     });
     if (qty < 1) {
@@ -619,7 +653,7 @@ export class AutoTrader {
     // With a fixed capital per trade the stop stays where the chart puts it (it is limited by the list's widest stop);
     // the risk-per-trade cap would otherwise squeeze it tighter than normal price noise.
     const maxLoss = this.capitalPerTrade > 0 ? Infinity : this.rules.riskPerTrade;
-    const stop = short ? initialStopShort(q.ltp, qty, s.stopPct, maxLoss) : initialStop(q.ltp, qty, s.stopPct, maxLoss);
+    const stop = short ? initialStopShort(q.ltp, qty, stopPct, maxLoss) : initialStop(q.ltp, qty, stopPct, maxLoss);
     // Saved with the trade: the pattern's reason plus every check it passed.
     const why = this.quality.enabled ? `${s.reason}. Checks passed: ${qualitySummary(q, this.d.store.candlesFor(q.symbol), this.quality, s)}` : s.reason;
     const res = await broker.placeOrder({ symbol: q.symbol, side: short ? 'SELL' : 'BUY', qty, reason: why });
@@ -628,8 +662,10 @@ export class AutoTrader {
       return;
     }
     const entry = res.avgPrice ?? q.ltp;
-    const target =
-      this.quality.targetPct > 0
+    const targets = this.targetPlan ? buildTargets(entry, stop, side, this.targetPlan) : undefined;
+    const target = targets
+      ? targets[targets.length - 1]
+      : this.quality.targetPct > 0
         ? short ? roundToTick(entry * (1 - this.quality.targetPct / 100), 'down') : roundToTick(entry * (1 + this.quality.targetPct / 100), 'up')
         : undefined;
     this.enteredToday.add(q.symbol);
@@ -648,13 +684,15 @@ export class AutoTrader {
       orderId: res.orderId,
       estimated: res.status !== 'filled',
       target,
+      targets,
+      stage: targets ? 0 : undefined,
       stop0: stop,
       side,
     });
     this.persist(this.positions.get(q.symbol)!);
     this.d.db.log(
       'info',
-      `${short ? 'SHORT' : 'BUY'} ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
+      `${short ? 'SHORT' : 'BUY'} ${qty} ${q.symbol} @ ${entry}${slipNote(q.ltp, entry)} (₹${Math.round(qty * entry)}, margin ₹${Math.round(qty * probe.marginPerShare)}) [${this.mode}] stop ${stop}${targets ? ` targets ${targets.join(' / ')}` : target ? ` target ${target}` : ''} lev ${probe.leverage.toFixed(1)}x — ${why}`,
     );
   }
 

@@ -14,7 +14,7 @@ import { loadDaily } from './scanner/daily.ts';
 import { ScannerService } from './scanner/service.ts';
 import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
-import { loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
+import { effectiveTargetPct, loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
 import { NewsService, shouldBlock } from './news/news.ts';
 import { AutoTrader } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
@@ -27,7 +27,13 @@ const store = new MarketStore();
 
 let upstox: UpstoxClient | undefined;
 if (config.upstox.apiKey) {
-  upstox = new UpstoxClient({ ...config.upstox });
+  upstox = new UpstoxClient({
+    ...config.upstox,
+    onUnauthorized: () => {
+      db.setSetting('upstox_token', ''); // do not reload a dead token after a restart
+      db.log('warn', 'Upstox rejected the login token (expired or replaced). Log in to Upstox again.');
+    },
+  });
   // Reuse today's token if the login already happened today.
   const saved = db.getSetting('upstox_token');
   if (!upstox.hasToken && saved) {
@@ -86,9 +92,11 @@ const applySettings = () => {
   trader.allowShort = settings.shortSelling;
   trader.capitalPerTrade = settings.capitalPerTrade;
   trader.entriesPerMinute = settings.entriesPerMinute;
+  trader.minStopWidthPct = settings.minStopWidthPct;
+  trader.targetPlan = settings.exitPlan.enabled ? { t1: settings.exitPlan.t1, t2: settings.exitPlan.t2, t3: settings.exitPlan.t3 } : undefined;
   trader.filters.requireAboveVwap = settings.requireAboveVwap;
   trader.filters.newsFilter = settings.newsFilter;
-  Object.assign(trader.quality, { enabled: settings.qualityGate, targetPct: l.targetPct, stopLossPct: l.stopLossPct, minRewardRisk: settings.minRewardRisk });
+  Object.assign(trader.quality, { enabled: settings.qualityGate, targetPct: effectiveTargetPct(settings, universe), stopLossPct: l.stopLossPct, minRewardRisk: settings.minRewardRisk, ...settings.entryChecks, t1: settings.exitPlan.enabled ? settings.exitPlan.t1 : 0 });
 };
 applySettings();
 

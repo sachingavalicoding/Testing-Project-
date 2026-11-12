@@ -30,7 +30,7 @@ export default function BottomPanel({ status, onSelect }: { status?: Status; onS
             <tbody>
               {positions.map((p) => (
                 <tr key={p.symbol} className="cursor-pointer border-t border-slate-800" onClick={() => onSelect(p.symbol)}>
-                  <td className="py-1.5">{p.symbol} {p.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>} <span className="text-xs text-slate-500">{p.pattern}</span></td>
+                  <td className="py-1.5">{p.symbol} {p.side === 'short' && <span className="rounded bg-red-800 px-1 text-[10px] font-bold">SHORT</span>} <span className="text-xs text-slate-500">{p.pattern}</span> {p.targets && <span className={`rounded px-1 text-[10px] font-bold ${(p.stage ?? 0) > 0 ? 'bg-green-400/20 text-green-400' : 'bg-slate-800 text-slate-400'}`}>T{p.stage ?? 0}/{p.targets.length}</span>}</td>
                   <td className="px-1.5 text-right">{p.qty}</td><td className="px-1.5 text-right">{p.entry}</td><td className="px-1.5 text-right">{p.ltp}</td>
                   <td className="px-1.5 text-right">{p.stop}</td><td className={`px-1.5 text-right ${pnlColor(p.pnl)}`}>{rupee(p.pnl)}</td>
                   <td className="pl-2 text-right">

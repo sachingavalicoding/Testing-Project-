@@ -2,6 +2,8 @@ export interface Mover { symbol: string; ltp: number; changePct: number; volume:
 export interface Position {
   symbol: string; mode: string; qty: number; entry: number; stop: number; highest: number;
   pattern: string; reason: string; ltp: number; pnl: number; estimated: boolean; target?: number;
+  /** Auto entries: prices of target 1, 2, 3 and how many were reached. Target 1: stop to break-even. Target 2: stop to target 1 */
+  targets?: number[]; stage?: number; stop0?: number;
   /** 'short' = sold first, to be bought back. Missing means long */
   side?: 'long' | 'short';
   /** What closing now would cost in charges. pnl is before charges, like a broker's screen */
@@ -72,6 +74,9 @@ export interface AppSettings {
   newsFilter: boolean;
   qualityGate: boolean;
   minRewardRisk: number;
+  exitPlan: { enabled: boolean; t1: number; t2: number; t3: number };
+  minStopWidthPct: number;
+  entryChecks: { minScore: number; minVolumeRatio: number; minStopPct: number; maxStretchPct: number; candleStrength: number; roomToTarget: number; trendSlope: number };
   scanner: ScannerSettings;
 }
 export interface ScannerSettings {
