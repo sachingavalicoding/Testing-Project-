@@ -191,7 +191,7 @@ describe('stricter entry checks', () => {
 describe('exit plan settings', () => {
   it('defaults to staged targets and validates the order', () => {
     const d = defaultSettings({ money: { maxDayMovePctByList: { large: 3, mid: 3, small: 3 }, riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 1000, capital: 50000 } } as never);
-    expect(d.exitPlan).toEqual({ enabled: true, t1: 1, t2: 1.5, t3: 2 });
+    expect(d.exitPlan).toEqual({ enabled: true, t1: 1, t2: 1.75, t3: 2.5 });
     expect(() => validateSettings({ ...d, exitPlan: { enabled: true, t1: 2, t2: 1.5, t3: 3 } })).toThrow(/go up/);
   });
 });

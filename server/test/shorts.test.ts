@@ -384,13 +384,13 @@ describe('short selling in the trader (paper)', () => {
   });
 
   describe('settings', () => {
-    it('short selling is off by default and must be a plain on or off', () => {
+    it('short selling is on by default (paper only) and must be a plain on or off', () => {
       const d = defaultSettings({ money: { capital: 50000, riskPerTrade: 500, maxOpenPositions: 5, dailyLossCap: 2000, maxDayMovePctByList: { large: 3, mid: 6, small: 12 } } } as never);
-      expect(d.shortSelling).toBe(false);
+      expect(d.shortSelling).toBe(true);
       expect(validateSettings({ ...d, shortSelling: true }).shortSelling).toBe(true);
       const old = JSON.parse(JSON.stringify(d));
       delete old.shortSelling;
-      expect(validateSettings(old).shortSelling).toBe(false);
+      expect(validateSettings(old).shortSelling).toBe(true);
       expect(() => validateSettings({ ...d, shortSelling: 'yes' })).toThrow(/short selling must be on or off/);
     });
   });

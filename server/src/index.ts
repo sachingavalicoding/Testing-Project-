@@ -14,7 +14,7 @@ import { loadDaily } from './scanner/daily.ts';
 import { ScannerService } from './scanner/service.ts';
 import { istDate } from './market/time.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
-import { effectiveTargetPct, loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
+import { qualityFor, loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
 import { NewsService, shouldBlock } from './news/news.ts';
 import { AutoTrader } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
@@ -96,7 +96,7 @@ const applySettings = () => {
   trader.targetPlan = settings.exitPlan.enabled ? { t1: settings.exitPlan.t1, t2: settings.exitPlan.t2, t3: settings.exitPlan.t3 } : undefined;
   trader.filters.requireAboveVwap = settings.requireAboveVwap;
   trader.filters.newsFilter = settings.newsFilter;
-  Object.assign(trader.quality, { enabled: settings.qualityGate, targetPct: effectiveTargetPct(settings, universe), stopLossPct: l.stopLossPct, minRewardRisk: settings.minRewardRisk, ...settings.entryChecks, t1: settings.exitPlan.enabled ? settings.exitPlan.t1 : 0 });
+  Object.assign(trader.quality, qualityFor(settings, universe));
 };
 applySettings();
 

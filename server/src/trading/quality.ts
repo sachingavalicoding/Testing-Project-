@@ -1,6 +1,6 @@
 import type { Candle, Quote } from '../types.ts';
 import { istDate, istMinutes, MARKET_OPEN } from '../market/time.ts';
-import { ema, rsi, vwap } from './indicators.ts';
+import { adx, atr, ema, macd, rsi, vwap } from './indicators.ts';
 import type { Signal } from './patterns.ts';
 
 /** Extra checks a signal must pass before we buy. Off by default so plain pattern tests stay simple. */
@@ -34,6 +34,14 @@ export interface QualityRules {
   trendSlope: number;
   /** Target 1 as a multiple of the risk, used for the room check (0 = no staged targets) */
   t1: number;
+  /** ADX (trend strength) must be at least this: below it the share is just chopping sideways (0 = off) */
+  minAdx: number;
+  /** 1 = the MACD histogram must agree with the trade and be moving the right way (0 = off) */
+  macdConfirm: number;
+  /** 1 = price must be on the right side of EMA50, the slower trend (0 = off) */
+  slowTrend: number;
+  /** Every stop is at least this many ATRs wide, so a normal candle cannot knock it out (0 = off) */
+  atrStopMult: number;
 }
 
 export const defaultQuality: QualityRules = {
@@ -52,6 +60,10 @@ export const defaultQuality: QualityRules = {
   roomToTarget: 0,
   trendSlope: 0,
   t1: 0,
+  minAdx: 0,
+  macdConfirm: 0,
+  slowTrend: 0,
+  atrStopMult: 0,
 };
 
 /** Biggest stop distance (fraction) that still gives the wanted reward-to-risk for the target. */
@@ -59,6 +71,14 @@ export function maxStopFraction(r: QualityRules): number {
   const byReward = r.targetPct > 0 ? r.targetPct / r.minRewardRisk / 100 : Infinity;
   const byLimit = r.stopLossPct > 0 ? r.stopLossPct / 100 : Infinity;
   return Math.min(byReward, byLimit);
+}
+
+/** The share's normal one-candle move (ATR of the last closed 1-minute candles) as a fraction of the price, or undefined. */
+export function atrFraction(candles: Candle[], now: number, price: number): number | undefined {
+  const current = Math.floor(now / 60_000) * 60_000;
+  const done = candles.filter((c) => c.t < current).slice(-60);
+  const a = atr(done, 14);
+  return a !== undefined && price > 0 ? a / price : undefined;
 }
 
 /** Median day change % of the list. A weak market makes long entries fail more often. */
@@ -83,6 +103,10 @@ export function qualitySummary(q: Quote, candles: Candle[], r: QualityRules, s: 
     parts.push(`EMA9 ${ema(closes, 9)[n].toFixed(2)} ${short ? 'below' : 'above'} EMA21 ${ema(closes, 21)[n].toFixed(2)}`);
     const strength = rsi(closes, 14);
     if (strength !== undefined) parts.push(`RSI ${strength.toFixed(0)}`);
+    const trend = adx(done.slice(-80), 14);
+    if (trend !== undefined) parts.push(`ADX ${trend.toFixed(0)}`);
+    const m = macd(closes);
+    if (m) parts.push(`MACD ${m.hist >= 0 ? '+' : ''}${m.hist.toFixed(3)}`);
   }
   return parts.join(', ');
 }
@@ -166,6 +190,22 @@ export function qualityReject(q: Quote, candles: Candle[], s: Signal, r: Quality
       const dayLow = Math.min(...today.map((c) => c.l));
       if (!short && dayHigh > q.ltp && dayHigh - q.ltp < room1 * r.roomToTarget) return `today's high ${dayHigh} is too close to target 1 (no room to run)`;
       if (short && dayLow < q.ltp && q.ltp - dayLow < room1 * r.roomToTarget) return `today's low ${dayLow} is too close to target 1 (no room to run)`;
+    }
+    if (r.minAdx > 0) {
+      const strong = adx(done.slice(-80), 14);
+      if (strong !== undefined && strong < r.minAdx) return `trend is weak (ADX ${strong.toFixed(0)}, needs ${r.minAdx}): the share is chopping sideways`;
+    }
+    if (r.macdConfirm > 0) {
+      const m = macd(closes);
+      if (m) {
+        if (!short && !(m.hist > 0 && m.hist >= m.prevHist)) return 'MACD does not agree: momentum is not building up';
+        if (short && !(m.hist < 0 && m.hist <= m.prevHist)) return 'MACD does not agree: momentum is not building down';
+      }
+    }
+    if (r.slowTrend > 0 && closes.length >= 55) {
+      const e50 = ema(closes, 50)[n];
+      if (!short && q.ltp < e50) return `price is under the slower trend (EMA50 ${e50.toFixed(2)})`;
+      if (short && q.ltp > e50) return `price is over the slower trend (EMA50 ${e50.toFixed(2)})`;
     }
     const strength = rsi(closes, 14);
     if (short) {

@@ -1,6 +1,7 @@
 import type { Config } from './config.ts';
 import type { Db } from './db/db.ts';
 import { defaultScanner, type ScannerSettings } from './scanner/types.ts';
+import { defaultQuality, type QualityRules } from './trading/quality.ts';
 import type { UniverseId } from './universe/index.ts';
 
 /** Limits that differ for each share list (large / mid / small cap). */
@@ -14,7 +15,20 @@ export interface ListRules {
   targetPct: number;
   /** Widest stop loss allowed, % below the buy price. A pattern whose natural stop is wider is skipped */
   stopLossPct: number;
+  /** Entry checks that differ for this list. Anything left out uses the "Entry checks" for all lists */
+  checks: Partial<EntryChecks>;
 }
+
+/**
+ * Starting entry checks per list. Large caps are smooth and liquid: a lower volume surge is enough, but price must not
+ * be stretched. Mid and small caps are noisier: they need a stronger volume surge, a stronger trend (ADX), a wider
+ * ATR stop and more room for the stretch, or normal swings knock them out.
+ */
+export const LIST_CHECKS: Record<UniverseId, Partial<EntryChecks>> = {
+  large: { minScore: 70, minVolumeRatio: 1.3, maxStretchPct: 0.5, minAdx: 18, atrStopMult: 1.2 },
+  mid: { minScore: 72, minVolumeRatio: 1.6, maxStretchPct: 0.8, minAdx: 20, atrStopMult: 1.5 },
+  small: { minScore: 75, minVolumeRatio: 2, maxStretchPct: 1.2, minAdx: 22, atrStopMult: 1.8 },
+};
 
 /** Starting target / stop per list: bigger moves and noise in mid and small caps need more room. */
 export const LIST_TARGETS: Record<UniverseId, { targetPct: number; stopLossPct: number }> = {
@@ -67,9 +81,22 @@ export interface EntryChecks {
   roomToTarget: number;
   /** EMA21 must be rising (falling for a short) over the last 5 candles: 1 = on, 0 = off */
   trendSlope: number;
+  /** Trend strength (ADX) needed, 0-60. 0 = off */
+  minAdx: number;
+  /** MACD histogram must agree with the trade: 1 = on, 0 = off */
+  macdConfirm: number;
+  /** Price on the right side of EMA50: 1 = on, 0 = off */
+  slowTrend: number;
+  /** Stop at least this many ATRs wide, 0 = off */
+  atrStopMult: number;
 }
 
-export const defaultEntryChecks: EntryChecks = { minScore: 70, minVolumeRatio: 1.3, minStopPct: 0.25, maxStretchPct: 0.6, candleStrength: 0.6, roomToTarget: 0.8, trendSlope: 1 };
+export const defaultEntryChecks: EntryChecks = { minScore: 70, minVolumeRatio: 1.3, minStopPct: 0.25, maxStretchPct: 0.6, candleStrength: 0.6, roomToTarget: 0.8, trendSlope: 1, minAdx: 18, macdConfirm: 1, slowTrend: 1, atrStopMult: 1.2 };
+
+/** The quality rules the trader uses for one list: global checks, then that list's own, plus targets and stop limits. */
+export function qualityFor(s: AppSettings, id: UniverseId): QualityRules {
+  return { ...defaultQuality, enabled: s.qualityGate, targetPct: effectiveTargetPct(s, id), stopLossPct: s.lists[id].stopLossPct, minRewardRisk: s.minRewardRisk, ...s.entryChecks, ...s.lists[id].checks, t1: s.exitPlan.enabled ? s.exitPlan.t1 : 0 };
+}
 
 /** Target % used for auto entries: none while the staged targets are on (they come from each trade's own stop). */
 export const effectiveTargetPct = (s: AppSettings, id: UniverseId): number => (s.exitPlan.enabled ? 0 : s.lists[id].targetPct);
@@ -78,9 +105,9 @@ export function defaultSettings(c: Config): AppSettings {
   const m = c.money;
   return {
     lists: {
-      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.large },
-      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.mid },
-      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.small },
+      large: { maxDayMovePct: m.maxDayMovePctByList.large, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.large, checks: { ...LIST_CHECKS.large } },
+      mid: { maxDayMovePct: m.maxDayMovePctByList.mid, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.mid, checks: { ...LIST_CHECKS.mid } },
+      small: { maxDayMovePct: m.maxDayMovePctByList.small, riskPerTrade: m.riskPerTrade, maxOpenPositions: m.maxOpenPositions, ...LIST_TARGETS.small, checks: { ...LIST_CHECKS.small } },
     },
     dailyLossCap: m.dailyLossCap,
     paperCash: m.capital,
@@ -90,8 +117,8 @@ export function defaultSettings(c: Config): AppSettings {
     newsFilter: true,
     qualityGate: true,
     minRewardRisk: 1.5,
-    shortSelling: false,
-    exitPlan: { enabled: true, t1: 1, t2: 1.5, t3: 2 },
+    shortSelling: true,
+    exitPlan: { enabled: true, t1: 1, t2: 1.75, t3: 2.5 },
     minStopWidthPct: 0.6,
     entryChecks: { ...defaultEntryChecks },
     scanner: { ...defaultScanner, riskPerTrade: m.riskPerTrade },
@@ -122,6 +149,7 @@ export function validateSettings(input: unknown): AppSettings {
       // Older saved settings do not have these: use the starting values for that list.
       targetPct: r.targetPct === undefined ? LIST_TARGETS[id].targetPct : inRange(`${id}: profit target %`, r.targetPct, 0.75, 10),
       stopLossPct: r.stopLossPct === undefined ? LIST_TARGETS[id].stopLossPct : inRange(`${id}: stop loss %`, r.stopLossPct, 0.2, 5),
+      checks: validateChecks(id, r.checks),
     };
   }
   if (typeof s.requireAboveVwap !== 'boolean' || typeof s.newsFilter !== 'boolean') throw new Error('Filters must be on or off');
@@ -137,7 +165,7 @@ export function validateSettings(input: unknown): AppSettings {
     // Older saved settings do not have these yet: use the defaults instead of throwing them away.
     qualityGate: typeof s.qualityGate === 'boolean' ? s.qualityGate : true,
     minRewardRisk: s.minRewardRisk === undefined ? 1.5 : inRange('reward-to-risk', s.minRewardRisk, 1, 5),
-    shortSelling: bool('short selling', s.shortSelling, false),
+    shortSelling: bool('short selling', s.shortSelling, true),
     exitPlan: validateExitPlan(s.exitPlan),
     minStopWidthPct: num('minimum stop width %', s.minStopWidthPct, 0.6, 0.1, 5),
     entryChecks: validateEntryChecks(s.entryChecks),
@@ -168,7 +196,21 @@ function validateEntryChecks(input: unknown): EntryChecks {
     candleStrength: num('candle strength', l.candleStrength, d.candleStrength, 0, 0.95),
     roomToTarget: num('room to target 1', l.roomToTarget, d.roomToTarget, 0, 5),
     trendSlope: num('trend slope check', l.trendSlope, d.trendSlope, 0, 1, true),
+    minAdx: num('trend strength (ADX)', l.minAdx, d.minAdx, 0, 60),
+    macdConfirm: num('MACD check', l.macdConfirm, d.macdConfirm, 0, 1, true),
+    slowTrend: num('slow trend check', l.slowTrend, d.slowTrend, 0, 1, true),
+    atrStopMult: num('ATR stop multiple', l.atrStopMult, d.atrStopMult, 0, 5),
   };
+}
+
+/** One list's own entry checks. Anything missing (older saved settings) takes the starting value for that list. */
+function validateChecks(id: UniverseId, input: unknown): Partial<EntryChecks> {
+  const l = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const start = { ...defaultEntryChecks, ...LIST_CHECKS[id] };
+  const all = validateEntryChecks({ ...start, ...l });
+  const out: Partial<EntryChecks> = {};
+  for (const k of Object.keys(LIST_CHECKS[id]) as Array<keyof EntryChecks>) out[k] = all[k];
+  return out;
 }
 
 const bool = (name: string, v: unknown, fallback: boolean): boolean => {

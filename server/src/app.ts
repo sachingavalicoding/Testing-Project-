@@ -12,10 +12,9 @@ import { REAL_CONFIRM_TEXT, type ManualBuyRequest } from './trading/autoTrader.t
 import { PATTERNS } from './trading/patterns.ts';
 import type { UpstoxClient } from './broker/upstoxClient.ts';
 import type { Candle, Mode } from './types.ts';
-import { effectiveTargetPct, type AppSettings } from './settings.ts';
+import { qualityFor, type AppSettings } from './settings.ts';
 import type { NewsService } from './news/news.ts';
 import { buildPicks } from './picks.ts';
-import { defaultQuality } from './trading/quality.ts';
 import type { ScannerService } from './scanner/service.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
@@ -176,7 +175,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       patterns: deps.patterns,
       news: deps.news,
       maxDayMovePct: s.lists[deps.universe.current].maxDayMovePct,
-      quality: { ...defaultQuality, enabled: s.qualityGate, targetPct: effectiveTargetPct(s, deps.universe.current), stopLossPct: s.lists[deps.universe.current].stopLossPct, minRewardRisk: s.minRewardRisk, ...s.entryChecks, t1: s.exitPlan.enabled ? s.exitPlan.t1 : 0 },
+      quality: qualityFor(s, deps.universe.current),
     });
   });
 

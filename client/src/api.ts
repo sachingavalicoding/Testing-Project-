@@ -62,7 +62,8 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 export const rupee = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; targetPct: number; stopLossPct: number }
+export interface EntryChecks { minScore: number; minVolumeRatio: number; minStopPct: number; maxStretchPct: number; candleStrength: number; roomToTarget: number; trendSlope: number; minAdx: number; macdConfirm: number; slowTrend: number; atrStopMult: number }
+export interface ListRules { maxDayMovePct: number; riskPerTrade: number; maxOpenPositions: number; targetPct: number; stopLossPct: number; checks: Partial<EntryChecks> }
 export interface AppSettings {
   lists: Record<'large' | 'mid' | 'small', ListRules>;
   dailyLossCap: number;
@@ -76,7 +77,7 @@ export interface AppSettings {
   minRewardRisk: number;
   exitPlan: { enabled: boolean; t1: number; t2: number; t3: number };
   minStopWidthPct: number;
-  entryChecks: { minScore: number; minVolumeRatio: number; minStopPct: number; maxStretchPct: number; candleStrength: number; roomToTarget: number; trendSlope: number };
+  entryChecks: EntryChecks;
   scanner: ScannerSettings;
 }
 export interface ScannerSettings {

@@ -53,6 +53,7 @@ export default function Settings() {
   const setSc = (patch: Partial<ScannerSettings>) => setS({ ...s, scanner: { ...sc, ...patch } });
   const setList = (cap: Cap, patch: Partial<ListRules>) => setS({ ...s, lists: { ...s.lists, [cap]: { ...s.lists[cap], ...patch } } });
   const setEc = (patch: Partial<AppSettings["entryChecks"]>) => setS({ ...s, entryChecks: { ...s.entryChecks, ...patch } });
+  const setCheck = (cap: Cap, patch: Partial<ListRules['checks']>) => setList(cap, { checks: { ...s.lists[cap].checks, ...patch } });
 
   const save = async () => {
     const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) });
@@ -78,6 +79,12 @@ export default function Settings() {
             value={s.lists[cap].targetPct} onChange={(n) => setList(cap, { targetPct: n })} />
           <Field label="Widest stop loss (%)" hint="Entries whose natural stop is wider than this are skipped" step={0.1}
             value={s.lists[cap].stopLossPct} onChange={(n) => setList(cap, { stopLossPct: n })} />
+          <p className="mt-2 text-xs font-semibold text-slate-400">Entry checks for this list (buy and short)</p>
+          <Field label="Minimum pattern score" hint="Out of 100. Noisier lists need a higher score" value={s.lists[cap].checks.minScore ?? s.entryChecks.minScore} onChange={(n) => setCheck(cap, { minScore: n })} />
+          <Field label="Volume vs recent average (times)" hint="Mid and small caps fake breakouts on thin volume: ask for more" step={0.1} value={s.lists[cap].checks.minVolumeRatio ?? s.entryChecks.minVolumeRatio} onChange={(n) => setCheck(cap, { minVolumeRatio: n })} />
+          <Field label="Most stretched from EMA9 (%)" hint="Do not chase. Volatile shares get more room" step={0.1} value={s.lists[cap].checks.maxStretchPct ?? s.entryChecks.maxStretchPct} onChange={(n) => setCheck(cap, { maxStretchPct: n })} />
+          <Field label="Trend strength, ADX (0 = off)" hint="Under about 18 the share is just chopping sideways. 20+ is a real trend" value={s.lists[cap].checks.minAdx ?? s.entryChecks.minAdx} onChange={(n) => setCheck(cap, { minAdx: n })} />
+          <Field label="Stop at least this many ATRs (0 = off)" hint="ATR is the normal one-minute move. A stop tighter than this is knocked out by ordinary noise. Capped by Widest stop loss" step={0.1} value={s.lists[cap].checks.atrStopMult ?? s.entryChecks.atrStopMult} onChange={(n) => setCheck(cap, { atrStopMult: n })} />
         </section>
       ))}
 
@@ -87,7 +94,7 @@ export default function Settings() {
           value={s.capitalPerTrade} onChange={(n) => setS({ ...s, capitalPerTrade: n })} />
         <Field label="Most new trades per minute" hint="Stops a burst of entries on the same market move. The best scores go first, the rest wait for the next minute"
           value={s.entriesPerMinute} onChange={(n) => setS({ ...s, entriesPerMinute: n })} />
-        <Toggle label="Allow short selling (intraday)" hint="Sell first, buy back later, to make money when a share falls. Paper mode only: it is not tried with real Upstox orders yet. Off by default. The auto trader then also takes bearish entries, and the order ticket gets a Short button" value={s.shortSelling} onChange={(b) => setS({ ...s, shortSelling: b })} />
+        <Toggle label="Allow short selling (intraday)" hint="Sell first, buy back later, to make money when a share falls. Paper mode only: it is not tried with real Upstox orders yet. The auto trader then also takes bearish entries, and the order ticket gets a Short button" value={s.shortSelling} onChange={(b) => setS({ ...s, shortSelling: b })} />
         <Field label="Paper cash (₹)" hint={`Pretend money for paper trading (now ${rupee(s.paperCash)}). Real mode uses CAPITAL from the server .env`} step={1000}
           value={s.paperCash} onChange={(n) => setS({ ...s, paperCash: n })} />
         <Field label="Daily loss cap (₹)" hint={`Sell everything and stop for the day at this loss (now ${rupee(s.dailyLossCap)})`}
@@ -133,6 +140,10 @@ export default function Settings() {
         <Field label="Most above EMA9 (%)" hint="Do not chase: skip when price is already this far above the 9-candle average (below it for a short)" step={0.1} value={s.entryChecks.maxStretchPct} onChange={(n) => setEc({ maxStretchPct: n })} />
         <Field label="Signal candle strength (0 to 0.95)" hint="0.6 = the candle must close in the top 40% of its range (bottom 40% for a short)" step={0.05} value={s.entryChecks.candleStrength} onChange={(n) => setEc({ candleStrength: n })} />
         <Field label="Room to target 1 (times)" hint="Skip when today's high is closer than this many times target 1: the price would hit a wall" step={0.1} value={s.entryChecks.roomToTarget} onChange={(n) => setEc({ roomToTarget: n })} />
+        <Field label="Trend strength, ADX (0 = off)" hint="Default for all lists (each list above can differ). ADX under about 18 means the share is moving sideways: breakouts fail" value={s.entryChecks.minAdx} onChange={(n) => setEc({ minAdx: n })} />
+        <Toggle label="MACD must agree" hint="For a buy the MACD histogram must be above zero and rising, for a short below zero and falling: momentum is really building in your direction" value={s.entryChecks.macdConfirm === 1} onChange={(b) => setEc({ macdConfirm: b ? 1 : 0 })} />
+        <Toggle label="Slower trend must agree (EMA50)" hint="Buy only above the 50-candle average, short only below it. Skipped until 55 candles exist" value={s.entryChecks.slowTrend === 1} onChange={(b) => setEc({ slowTrend: b ? 1 : 0 })} />
+        <Field label="Stop at least this many ATRs (0 = off)" hint="Default for all lists. Widens a too-tight stop to a few times the normal one-minute move" step={0.1} value={s.entryChecks.atrStopMult} onChange={(n) => setEc({ atrStopMult: n })} />
         <Toggle label="EMA21 must be sloping the right way" hint="Rising for a buy, falling for a short, over the last 5 candles" value={s.entryChecks.trendSlope === 1} onChange={(b) => setEc({ trendSlope: b ? 1 : 0 })} />
       </section>
 

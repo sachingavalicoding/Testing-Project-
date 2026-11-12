@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { roundToTick } from './ticks.ts';
 import { initialStop, initialStopShort, ladderStop, ladderStopShort, advanceTargets, buildTargets, type LadderRule, type TargetPlan } from './stops.ts';
 import { chargesFor, grossPnl, netPnlFor, sideOf, type Side } from './pnl.ts';
-import { defaultQuality, marketBlocksSide, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
+import { atrFraction, defaultQuality, marketBlocksSide, marketBreadthPct, qualityReject, qualitySummary, type QualityRules } from './quality.ts';
 
 export interface Position {
   symbol: string;
@@ -634,7 +634,15 @@ export class AutoTrader {
   private async enter(q: Quote, s: Signal): Promise<void> {
     const side: Side = s.side ?? 'long';
     const short = side === 'short';
-    const stopPct = Math.max(s.stopPct, this.minStopWidthPct / 100); // a wider stop than the pattern's own, so normal noise does not hit it
+    let stopPct = Math.max(s.stopPct, this.minStopWidthPct / 100); // a wider stop than the pattern's own, so normal noise does not hit it
+    if (this.quality.atrStopMult > 0) {
+      // Never tighter than a few ATRs (the share's normal one-candle move), but not wider than the list's widest stop.
+      const a = atrFraction(this.d.store.candlesFor(q.symbol), this.now(), q.ltp);
+      if (a !== undefined) {
+        const cap = this.quality.stopLossPct > 0 ? this.quality.stopLossPct / 100 : Infinity;
+        stopPct = Math.max(stopPct, Math.min(a * this.quality.atrStopMult, cap));
+      }
+    }
     const broker = this.broker;
     // Ask the broker for the real MIS margin for one share first, then size.
     const probe = await broker.getMargin(q.symbol, 1, q.ltp);
