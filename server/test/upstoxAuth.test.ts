@@ -135,6 +135,20 @@ describe('login API', () => {
     expect((await app.inject({ url: '/api/status' })).json().upstoxState).toBe('ok');
   });
 
+  it('also accepts the shorter /upstox/callback address', async () => {
+    const fake = (async (url: string) =>
+      String(url).includes('/login/authorization/token')
+        ? new Response(JSON.stringify({ access_token: 'FRESH2' }), { status: 200 })
+        : new Response('{}', { status: 401 })) as unknown as typeof fetch;
+    const c = new UpstoxClient({ ...opts, redirectUri: 'http://localhost:5000/upstox/callback' }, fake);
+    const { app, db } = await make(c);
+    const r = await app.inject({ url: '/upstox/callback?code=abc' });
+    expect(r.statusCode).toBe(302);
+    expect(loadToken(db)).toBe('FRESH2');
+    const login = await app.inject({ url: '/api/auth/upstox/login' });
+    expect(login.headers.location).toContain(encodeURIComponent('http://localhost:5000/upstox/callback'));
+  });
+
   it('callback explains a failed login in plain words', async () => {
     const fake = (async () => new Response('{"errors":[]}', { status: 400 })) as unknown as typeof fetch;
     const { app } = await make(new UpstoxClient(opts, fake));

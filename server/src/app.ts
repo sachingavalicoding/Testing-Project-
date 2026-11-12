@@ -284,7 +284,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.redirect(upstox.loginUrl());
   });
 
-  app.get<{ Querystring: { code?: string; error?: string; error_description?: string } }>('/api/auth/upstox/callback', async (req, reply) => {
+  // Two paths on purpose: our own, and /upstox/callback, the address many Upstox apps already have registered.
+  const callbackPaths = ['/api/auth/upstox/callback', '/upstox/callback'];
+  app.get<{ Querystring: { code?: string; error?: string; error_description?: string } }>(callbackPaths, async (req, reply) => {
     if (!upstox) return reply.code(400).type('text/html').send(page('Upstox keys are not set', 'Put UPSTOX_API_KEY and UPSTOX_API_SECRET in your .env file and restart the server.'));
     if (!req.query.code) {
       return reply.code(400).type('text/html').send(page('Upstox login was not completed', req.query.error_description ?? req.query.error ?? 'No login code came back from Upstox.'));
