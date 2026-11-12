@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import type { Db } from './db/db.ts';
@@ -286,7 +286,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // Two paths on purpose: our own, and /upstox/callback, the address many Upstox apps already have registered.
   const callbackPaths = ['/api/auth/upstox/callback', '/upstox/callback'];
-  app.get<{ Querystring: { code?: string; error?: string; error_description?: string } }>(callbackPaths, async (req, reply) => {
+  const onCallback = async (req: FastifyRequest<{ Querystring: { code?: string; error?: string; error_description?: string } }>, reply: FastifyReply) => {
     if (!upstox) return reply.code(400).type('text/html').send(page('Upstox keys are not set', 'Put UPSTOX_API_KEY and UPSTOX_API_SECRET in your .env file and restart the server.'));
     if (!req.query.code) {
       return reply.code(400).type('text/html').send(page('Upstox login was not completed', req.query.error_description ?? req.query.error ?? 'No login code came back from Upstox.'));
@@ -302,7 +302,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         page('Upstox login failed', 'Check that UPSTOX_API_KEY and UPSTOX_API_SECRET are right and that the redirect URL in your Upstox app is exactly the same as UPSTOX_REDIRECT_URI in .env. Then try again.'),
       );
     }
-  });
+  };
+  for (const path of callbackPaths) app.get(path, onCallback);
 
   if (!(deps.clientDist && existsSync(join(deps.clientDist, 'index.html')))) {
     // Friendly message instead of a raw 404 when the web app has not been built yet.
