@@ -68,6 +68,15 @@ export class Db {
         entry REAL NOT NULL, stop REAL NOT NULL, target1 REAL NOT NULL, target2 REAL NOT NULL, qty INTEGER NOT NULL, plan TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS scanner_picks_day ON scanner_picks(day);
+      CREATE TABLE IF NOT EXISTS day_candles (
+        symbol TEXT NOT NULL, t INTEGER NOT NULL, day TEXT NOT NULL,
+        o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL,
+        PRIMARY KEY (symbol, t)
+      );
+      CREATE INDEX IF NOT EXISTS day_candles_day ON day_candles(day);
+      CREATE TABLE IF NOT EXISTS day_meta (
+        day TEXT NOT NULL, symbol TEXT NOT NULL, prev_close REAL NOT NULL, PRIMARY KEY (day, symbol)
+      );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL
       );
@@ -139,6 +148,40 @@ export class Db {
 
   recentEvents(limit = 100): EventRow[] {
     return this.db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT ?').all(limit) as unknown as EventRow[];
+  }
+
+  /** Save 1-minute candles of one share (replaces a candle with the same minute: the newest close wins). */
+  saveCandles(day: string, symbol: string, candles: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>, prevClose?: number): void {
+    const ins = this.db.prepare('INSERT OR REPLACE INTO day_candles (symbol, t, day, o, h, l, c, v) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    this.db.exec('BEGIN');
+    try {
+      for (const c of candles) ins.run(symbol, c.t, day, c.o, c.h, c.l, c.c, c.v);
+      if (prevClose !== undefined && prevClose > 0) {
+        this.db.prepare('INSERT OR REPLACE INTO day_meta (day, symbol, prev_close) VALUES (?, ?, ?)').run(day, symbol, prevClose);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /** Days with saved candles, newest first, with how many shares and candles each has. */
+  recordedDays(): Array<{ day: string; symbols: number; candles: number }> {
+    return this.db.prepare('SELECT day, COUNT(DISTINCT symbol) AS symbols, COUNT(*) AS candles FROM day_candles GROUP BY day ORDER BY day DESC').all() as unknown as Array<{ day: string; symbols: number; candles: number }>;
+  }
+
+  /** Every saved candle of a day, grouped by share, oldest first, with the previous close of each share. */
+  loadDay(day: string): Map<string, { prevClose: number; candles: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> }> {
+    const out = new Map<string, { prevClose: number; candles: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> }>();
+    const prev = new Map((this.db.prepare('SELECT symbol, prev_close FROM day_meta WHERE day = ?').all(day) as unknown as Array<{ symbol: string; prev_close: number }>).map((r) => [r.symbol, r.prev_close]));
+    const rows = this.db.prepare('SELECT symbol, t, o, h, l, c, v FROM day_candles WHERE day = ? ORDER BY symbol, t').all(day) as unknown as Array<{ symbol: string; t: number; o: number; h: number; l: number; c: number; v: number }>;
+    for (const r of rows) {
+      let e = out.get(r.symbol);
+      if (!e) out.set(r.symbol, (e = { prevClose: prev.get(r.symbol) ?? r.o, candles: [] }));
+      e.candles.push({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v });
+    }
+    return out;
   }
 
   close(): void {

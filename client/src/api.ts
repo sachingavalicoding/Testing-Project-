@@ -80,6 +80,8 @@ export interface AppSettings {
   exitPlan: { enabled: boolean; t1: number; t2: number; t3: number };
   minStopWidthPct: number;
   entryChecks: EntryChecks;
+  /** Entry patterns switched off (the Lab learns which ones lose money) */
+  disabledPatterns: string[];
   scanner: ScannerSettings;
 }
 export interface ScannerSettings {

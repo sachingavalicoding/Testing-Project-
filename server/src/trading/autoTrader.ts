@@ -182,6 +182,13 @@ export class AutoTrader {
 
   filters = { requireAboveVwap: true, newsFilter: true };
 
+  /** Pattern ids that are switched off in Settings (the Lab turns off patterns that keep losing) */
+  disabledPatterns = new Set<string>();
+
+  /** Look for new entries at most this often (ms). 0 = on every price update (live). The Lab replay uses a gap to run fast. */
+  entryScanGapMs = 0;
+  private lastScan = 0;
+
   /** Short selling (sell first, buy back later) is off until switched on in Settings. */
   allowShort = false;
 
@@ -448,12 +455,20 @@ export class AutoTrader {
       this.rollDay();
       await this.manageOpen(quotes);
       if (!this.haltedReason) await this.fillPending(quotes);
-      if (this.running && !this.haltedReason) await this.lookForEntries(quotes);
+      if (this.running && !this.haltedReason && this.scanDue()) await this.lookForEntries(quotes);
     } catch (err) {
       this.d.db.log('error', `Trader error: ${(err as Error).message}`);
     } finally {
       this.busy = false;
     }
+  }
+
+  private scanDue(): boolean {
+    if (this.entryScanGapMs <= 0) return true;
+    const n = this.now();
+    if (n - this.lastScan < this.entryScanGapMs) return false;
+    this.lastScan = n;
+    return true;
   }
 
   private rollDay(): void {
@@ -565,6 +580,7 @@ export class AutoTrader {
       const dayMove = q.prevClose > 0 ? Math.abs((q.ltp - q.prevClose) / q.prevClose) * 100 : 0;
       const candles = this.d.store.candlesFor(q.symbol);
       for (const p of this.d.patterns) {
+        if (this.disabledPatterns.has(p.id)) continue;
         const s = p.check(q, candles);
         if (!s) continue;
         const side: Side = s.side ?? 'long';

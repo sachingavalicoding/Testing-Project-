@@ -2,6 +2,7 @@ import type { Config } from './config.ts';
 import type { Db } from './db/db.ts';
 import { defaultScanner, type ScannerSettings } from './scanner/types.ts';
 import { defaultQuality, type QualityRules } from './trading/quality.ts';
+import { PATTERNS } from './trading/patterns.ts';
 import type { UniverseId } from './universe/index.ts';
 
 /** Limits that differ for each share list (large / mid / small cap). */
@@ -62,6 +63,8 @@ export interface AppSettings {
   minStopWidthPct: number;
   /** Stricter entry checks. Each one is a number; 0 turns that check off */
   entryChecks: EntryChecks;
+  /** Entry patterns switched off (ids like 'squeeze'). The Lab turns off the ones that lose money */
+  disabledPatterns: string[];
   /** The "Best trades now" scanner (off by default) */
   scanner: ScannerSettings;
 }
@@ -121,6 +124,7 @@ export function defaultSettings(c: Config): AppSettings {
     exitPlan: { enabled: true, t1: 1, t2: 1.75, t3: 2.5 },
     minStopWidthPct: 0.6,
     entryChecks: { ...defaultEntryChecks },
+    disabledPatterns: [],
     scanner: { ...defaultScanner, riskPerTrade: m.riskPerTrade },
   };
 }
@@ -169,8 +173,17 @@ export function validateSettings(input: unknown): AppSettings {
     exitPlan: validateExitPlan(s.exitPlan),
     minStopWidthPct: num('minimum stop width %', s.minStopWidthPct, 0.6, 0.1, 5),
     entryChecks: validateEntryChecks(s.entryChecks),
+    disabledPatterns: validatePatternIds(s.disabledPatterns),
     scanner: validateScanner(s.scanner),
   };
+}
+
+function validatePatternIds(v: unknown): string[] {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw new Error('disabled patterns must be a list');
+  const known = new Set(PATTERNS.map((p) => p.id));
+  for (const id of v) if (typeof id !== 'string' || !known.has(id)) throw new Error(`unknown pattern "${String(id)}"`);
+  return [...new Set(v as string[])];
 }
 
 function validateExitPlan(input: unknown): AppSettings['exitPlan'] {

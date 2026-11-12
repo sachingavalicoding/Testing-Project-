@@ -19,6 +19,7 @@ import { buildPicks } from './picks.ts';
 import type { ScannerService } from './scanner/service.ts';
 import type { Pattern } from './trading/patterns.ts';
 import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
+import { registerLab } from './lab/routes.ts';
 
 export interface AppDeps {
   db: Db;
@@ -93,6 +94,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.post<{ Body: { id: string } }>('/api/universe', async (req, reply) => {
     if (!isUniverseId(req.body?.id)) return reply.code(400).send(fail('id must be large, mid or small'));
+    if (req.body.id !== 'large') return reply.code(400).send(fail('Only the large cap list is used now: the app learns and trades on large caps only'));
     try {
       await deps.universe.select(req.body.id);
       return { ok: true, current: deps.universe.current };
@@ -320,6 +322,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       req.url.startsWith('/api/') ? reply.code(404).send(fail('Not found')) : reply.sendFile('index.html'),
     );
   }
+
+  registerLab(app, { db, store, feed, settings: deps.settings });
 
   return app;
 }

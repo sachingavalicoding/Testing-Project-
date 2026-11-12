@@ -3,10 +3,11 @@ import Terminal from './Terminal.tsx';
 import Picks from './Picks.tsx';
 import Best from './Best.tsx';
 import Settings from './Settings.tsx';
+import Lab from './Lab.tsx';
 import PositionCard from './Positions.tsx';
 import { get, post, rupee, type EventRow, type Mover, type Status, type Trade } from './api.ts';
 
-type Tab = 'trade' | 'auto' | 'best' | 'picks' | 'movers' | 'report' | 'settings';
+type Tab = 'trade' | 'auto' | 'best' | 'picks' | 'movers' | 'report' | 'lab' | 'settings';
 
 interface Live { status: Status; movers: { gainers: Mover[]; losers: Mover[] } }
 
@@ -24,7 +25,7 @@ function useLive() {
 
 const NAV: [Tab, string, string][] = [
   ['trade', '📈', 'Trade'], ['auto', '🤖', 'Auto'], ['best', '⭐', 'Best'], ['picks', '🎯', 'Picks'],
-  ['movers', '🔥', 'Movers'], ['report', '🧾', 'Report'], ['settings', '⚙️', 'Settings'],
+  ['movers', '🔥', 'Movers'], ['report', '🧾', 'Report'], ['lab', '🧪', 'Lab'], ['settings', '⚙️', 'Settings'],
 ];
 
 const pnlColor = (n: number) => (n > 0 ? 'text-green-400' : n < 0 ? 'text-red-400' : 'text-slate-300');
@@ -57,7 +58,7 @@ export default function App() {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-indigo-600 text-sm font-black text-white shadow-lg shadow-sky-900/40">IQ</div>
           <div>
             <h1 className="text-lg font-extrabold leading-none tracking-tight">Stock <span className="text-sky-400">IQ</span></h1>
-            <div className="mt-0.5 text-[10px] uppercase tracking-widest text-slate-500">Intraday · Nifty 100</div>
+            <div className="mt-0.5 text-[10px] uppercase tracking-widest text-slate-500">Intraday · Large caps (Nifty 100)</div>
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs">
@@ -83,6 +84,7 @@ export default function App() {
       {tab === 'picks' && <Picks onPick={openChart} />}
       {tab === 'movers' && live && <Movers movers={live.movers} onPick={openChart} />}
       {tab === 'report' && <Trades />}
+      {tab === 'lab' && <Lab />}
       {tab === 'settings' && (
         <div className="space-y-3">
           <Settings />
@@ -103,32 +105,6 @@ export default function App() {
         ))}
       </nav>
     </div>
-  );
-}
-
-interface UniverseInfo { current: string; options: { id: string; name: string; count: number; warning?: string }[] }
-
-function UniversePicker({ act, locked }: { act: (fn: () => Promise<unknown>) => void; locked: boolean }) {
-  const [u, setU] = useState<UniverseInfo>();
-  const load = () => get<UniverseInfo>('/api/universe').then(setU).catch(() => undefined);
-  useEffect(() => { void load(); }, []);
-  if (!u) return null;
-  const warning = u.options.find((o) => o.id === u.current)?.warning;
-  return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900 p-3">
-      <div className="mb-2 font-semibold">Share list (100 shares at a time)</div>
-      <div className="grid grid-cols-3 gap-2">
-        {u.options.map((o) => (
-          <button key={o.id} disabled={locked}
-            onClick={() => act(async () => { await post('/api/universe', { id: o.id }); await load(); })}
-            className={`rounded py-2 text-sm disabled:opacity-40 ${u.current === o.id ? 'bg-sky-700 font-bold' : 'bg-slate-800'}`}>
-            {o.id === 'large' ? 'Large' : o.id === 'mid' ? 'Mid' : 'Small'}
-          </button>
-        ))}
-      </div>
-      {locked && <p className="mt-2 text-xs text-slate-400">Close open positions to change the list.</p>}
-      {warning && <p className="mt-2 text-xs text-amber-400">{warning}</p>}
-    </section>
   );
 }
 
@@ -221,7 +197,6 @@ function Home({ s, meta, act, openChart }: { s: Status; meta?: Status; act: (fn:
         )}
       </section>
 
-      <UniversePicker act={act} locked={s.positions.length > 0} />
 
       <section>
         <div className="mb-2 flex items-center justify-between px-1">

@@ -10,4 +10,6 @@ export interface PriceFeed {
   /** Start following one more share (any share, not only the chosen list). Returns false if the broker does not know it. */
   watch(symbol: string): Promise<boolean>;
   getCandles(symbol: string, interval: '1minute' | 'day', days: number): Promise<Candle[]>;
+  /** 1-minute candles of the last `days` calendar days including earlier days (only the Upstox feed has this) */
+  getMinuteHistory?(symbol: string, days: number): Promise<Candle[]>;
 }

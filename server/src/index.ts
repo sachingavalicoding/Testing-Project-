@@ -14,11 +14,13 @@ import { seedHistory } from './market/seed.ts';
 import { loadDaily } from './scanner/daily.ts';
 import { ScannerService } from './scanner/service.ts';
 import { UpstoxFeed } from './market/upstoxFeed.ts';
-import { qualityFor, loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
+import { applySettingsToTrader } from './trading/configure.ts';
+import { loadSettings, defaultSettings, saveSettings, validateSettings, type AppSettings } from './settings.ts';
 import { NewsService, shouldBlock } from './news/news.ts';
 import { AutoTrader } from './trading/autoTrader.ts';
 import { PATTERNS } from './trading/patterns.ts';
-import { isUniverseId, UNIVERSES, type UniverseId } from './universe/index.ts';
+import { UNIVERSES, type UniverseId } from './universe/index.ts';
+import { recordStore } from './lab/recorder.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const config = loadConfig();
@@ -38,8 +40,9 @@ if (config.upstox.apiKey) {
 }
 
 let settings: AppSettings = loadSettings(db, defaultSettings(config));
-const savedUniverse = db.getSetting('universe');
-let universe: UniverseId = isUniverseId(savedUniverse) ? savedUniverse : 'large';
+// The app trades and learns on large caps only now (mid and small caps are no longer used).
+let universe: UniverseId = 'large';
+db.setSetting('universe', 'large');
 
 const feed: PriceFeed = config.feed === 'upstox' && upstox ? new UpstoxFeed(upstox) : new MockFeed();
 const realBroker = upstox ? new UpstoxBroker(upstox) : undefined;
@@ -74,25 +77,7 @@ const trader = new AutoTrader({
   },
 });
 
-/** Push the saved settings (for the active share list) into the trader. */
-const applySettings = () => {
-  const l = settings.lists[universe];
-  trader.setRules({
-    maxDayMovePct: l.maxDayMovePct,
-    riskPerTrade: l.riskPerTrade,
-    maxOpenPositions: l.maxOpenPositions,
-    dailyLossCap: settings.dailyLossCap,
-  });
-  trader.paperCash = settings.paperCash;
-  trader.allowShort = settings.shortSelling;
-  trader.capitalPerTrade = settings.capitalPerTrade;
-  trader.entriesPerMinute = settings.entriesPerMinute;
-  trader.minStopWidthPct = settings.minStopWidthPct;
-  trader.targetPlan = settings.exitPlan.enabled ? { t1: settings.exitPlan.t1, t2: settings.exitPlan.t2, t3: settings.exitPlan.t3 } : undefined;
-  trader.filters.requireAboveVwap = settings.requireAboveVwap;
-  trader.filters.newsFilter = settings.newsFilter;
-  Object.assign(trader.quality, qualityFor(settings, universe));
-};
+const applySettings = () => applySettingsToTrader(trader, settings, universe);
 applySettings();
 
 const scanner = new ScannerService({
@@ -162,6 +147,17 @@ const app = await buildApp({ db, store, trader, feed, upstox, feedWanted: config
   patterns: PATTERNS, clientDist: resolve(here, '../../client/dist') });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(`Stock IQ server on http://localhost:${config.port}  feed=${feed.name}  mode=${trader.mode}  real-lock=${config.realTradingEnabled ? 'OPEN' : 'LOCKED'}`);
+
+// Save today's candles for the Lab (replay and learning). Every minute, only with a real price feed: fake prices teach nothing.
+if (feed.name !== 'mock') {
+  setInterval(() => {
+    try {
+      recordStore(db, store, UNIVERSES.large.symbols);
+    } catch (e) {
+      db.log('warn', `Could not save candles: ${(e as Error).message}`);
+    }
+  }, 60_000).unref();
+}
 
 const shutdown = () => {
   feed.stop();

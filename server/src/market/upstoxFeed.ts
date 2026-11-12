@@ -85,6 +85,19 @@ export class UpstoxFeed implements PriceFeed {
     this.timer = undefined;
   }
 
+  /** Earlier days of 1-minute candles (Upstox historical v3: /minutes/1/{to}/{from}). */
+  async getMinuteHistory(symbol: string, days: number): Promise<Candle[]> {
+    const key = encodeURIComponent(this.client.keyFor(symbol));
+    const to = new Date();
+    const from = new Date(to.getTime() - Math.min(30, Math.max(1, days)) * 86_400_000);
+    const d = (x: Date) => x.toISOString().slice(0, 10);
+    const data = await this.client.request<{ candles: Array<[string, number, number, number, number, number]> }>(
+      'GET',
+      this.client.api(`/v3/historical-candle/${key}/minutes/1/${d(to)}/${d(from)}`),
+    );
+    return (data?.candles ?? []).map(([t, o, h, l, c, v]) => ({ t: Date.parse(t), o, h, l, c, v })).sort((a, b) => a.t - b.t);
+  }
+
   async getCandles(symbol: string, interval: '1minute' | 'day', days: number): Promise<Candle[]> {
     const key = encodeURIComponent(this.client.keyFor(symbol));
     const to = new Date();

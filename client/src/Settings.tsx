@@ -39,6 +39,11 @@ function TimeField({ label, hint, value, onChange }: { label: string; hint: stri
   );
 }
 
+const PATTERN_NAMES: Array<[string, string]> = [
+  ['orb15', 'Opening range breakout (buy)'], ['vwappb', 'VWAP / EMA pullback bounce (buy)'], ['squeeze', 'Tight range breakout (buy)'], ['ema9x21', 'EMA 9/21 cross up (buy)'], ['mom', 'Momentum breakout (buy)'],
+  ['orb15s', 'Opening range breakdown (short)'], ['vwaprj', 'VWAP / EMA rejection (short)'], ['squeezes', 'Tight range breakdown (short)'], ['ema9x21s', 'EMA 9/21 cross down (short)'], ['moms', 'Momentum breakdown (short)'],
+];
+
 export default function Settings() {
   const [s, setS] = useState<AppSettings>();
   const [active, setActive] = useState<Cap>('large');
@@ -66,7 +71,7 @@ export default function Settings() {
     <div className="space-y-3">
       {msg && <div className={`rounded p-2 text-sm ${msg.ok ? 'bg-green-900/50' : 'bg-red-900/60'}`}>{msg.text}</div>}
 
-      {(['large', 'mid', 'small'] as Cap[]).map((cap) => (
+      {(['large'] as Cap[]).map((cap) => (
         <section key={cap} className={`rounded-lg bg-slate-900 p-3 ${active === cap ? 'ring-1 ring-sky-600' : ''}`}>
           <h2 className="mb-1 font-semibold">{names[cap]} {active === cap && <span className="text-xs font-normal text-sky-400">(in use now)</span>}</h2>
           <Field label="Skip if already moved (%)" hint="Do not buy shares that already moved more than this today" step={0.5}
@@ -130,6 +135,14 @@ export default function Settings() {
           value={s.exitPlan.t2} onChange={(n) => setS({ ...s, exitPlan: { ...s.exitPlan, t2: n } })} />
         <Field label="Target 3 (times the risk)" hint="Last target: the trade is sold here. Keep it close so it can really be hit" step={0.25}
           value={s.exitPlan.t3} onChange={(n) => setS({ ...s, exitPlan: { ...s.exitPlan, t3: n } })} />
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+        <h2 className="mb-1 font-semibold">Entry patterns <span className="text-xs font-normal text-slate-500">(the Lab tab shows which ones earn money)</span></h2>
+        {PATTERN_NAMES.map(([id, name]) => (
+          <Toggle key={id} label={name} hint={id} value={!(s.disabledPatterns ?? []).includes(id)}
+            onChange={(on) => setS({ ...s, disabledPatterns: on ? (s.disabledPatterns ?? []).filter((x) => x !== id) : [...(s.disabledPatterns ?? []), id] })} />
+        ))}
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-3">
