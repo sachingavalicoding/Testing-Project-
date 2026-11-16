@@ -215,6 +215,29 @@ export interface OptimizeResult {
   changes: Array<{ name: string; from: string; to: string }>;
   rounds: RoundLog[];
   stopped: boolean;
+  /** Days the learner learned from (oldest days) */
+  trainDays: string[];
+  /**
+   * The newest days are kept aside and never used for learning. After learning, the old and the learned settings are both
+   * played on those days. Learned settings that do not also earn more there were only fitted to the old days (luck).
+   */
+  check?: HoldOutCheck;
+}
+
+export interface HoldOutCheck {
+  days: string[];
+  before: EvalResult;
+  after: EvalResult;
+  /** True when the learned settings also earn more on the days they never saw */
+  passed: boolean;
+}
+
+/** With 3 or more days, keeps the newest quarter (at least 1 day) aside to check the learned settings on. */
+export function splitDays<T extends { day: string }>(days: T[], minDays = 3): { train: T[]; test: T[] } {
+  const sorted = [...days].sort((a, b) => a.day.localeCompare(b.day));
+  if (sorted.length < minDays) return { train: sorted, test: [] };
+  const n = Math.max(1, Math.round(sorted.length * 0.25));
+  return { train: sorted.slice(0, -n), test: sorted.slice(-n) };
 }
 
 /** Small seeded random numbers so a run can be repeated exactly. */
@@ -230,19 +253,21 @@ export function rng(seed: number): () => number {
 }
 
 /**
- * Hill climbing. Each round it tries a few variants (1-2 settings changed at random), plays all saved days for each, and keeps
+ * Hill climbing. The newest days are kept aside (see splitDays) and the learner only learns from the older ones. Each round it tries a few variants (1-2 settings changed at random), plays all saved days for each, and keeps
  * the best one if it beats the current best. After the rounds it returns the best settings and what changed.
  */
 export async function optimize(
   days: DayData[],
   base: AppSettings,
-  opts: { rounds?: number; variants?: number; seed?: number; onRound?: (log: RoundLog, best: AppSettings) => void; shouldStop?: () => boolean } = {},
+  opts: { rounds?: number; variants?: number; seed?: number; holdOut?: boolean; onRound?: (log: RoundLog, best: AppSettings) => void; shouldStop?: () => boolean } = {},
 ): Promise<OptimizeResult> {
   const rounds = opts.rounds ?? 12;
   const variants = opts.variants ?? 6;
   const rand = rng(opts.seed ?? Date.now());
   const pick = (n: number) => Math.floor(rand() * n);
   const knobs = allKnobs();
+  const { train, test } = opts.holdOut === false ? { train: days, test: [] } : splitDays(days);
+  days = train;
   let best = clone(base);
   const start = await evaluate(days, best, opts.shouldStop);
   let bestEval = start;
@@ -282,5 +307,13 @@ export async function optimize(
     const b = knobValue(best, k);
     if (a !== b) changes.push({ name: knobName(k), from: a, to: b });
   }
-  return { start, best: bestEval, settings: best, changes, rounds: log, stopped };
+  let check: HoldOutCheck | undefined;
+  if (test.length > 0 && changes.length > 0 && !opts.shouldStop?.()) {
+    const before = await evaluate(test, base);
+    const after = await evaluate(test, best);
+    // Must earn more on unseen days, and must not turn a non-losing worst day into a bigger loss.
+    const passed = after.net > before.net && after.worstDay >= Math.min(before.worstDay, 0) * 1.5;
+    check = { days: test.map((d) => d.day), before, after, passed };
+  }
+  return { start, best: bestEval, settings: best, changes, rounds: log, stopped, trainDays: days.map((d) => d.day), check };
 }

@@ -176,7 +176,10 @@ function ReplayView({ days }: { days?: Days }) {
 interface AblationState { status: string; message?: string; done?: number; total?: number; result?: { base: { net: number; trades: number; winRate: number; days: number }; rows: Array<{ name: string; value: string; netWithout: number; tradesWithout: number; adds: number }> } }
 interface OptState {
   status: string; message?: string; rounds: Array<{ round: number; best: number; net: number; trades: number; change?: string }>; totalRounds: number; days: number;
-  result?: { start: { net: number; trades: number; winRate: number; profitableDays: number; days: number }; best: { net: number; trades: number; winRate: number; profitableDays: number; days: number; byPattern: Record<string, { trades: number; net: number }> }; changes: Array<{ name: string; from: string; to: string }>; stopped: boolean };
+  result?: { start: { net: number; trades: number; winRate: number; profitableDays: number; days: number }; best: { net: number; trades: number; winRate: number; profitableDays: number; days: number; byPattern: Record<string, { trades: number; net: number }> }; changes: Array<{ name: string; from: string; to: string }>; stopped: boolean;
+    trainDays: string[];
+    check?: { days: string[]; before: { net: number; trades: number; winRate: number; worstDay: number }; after: { net: number; trades: number; winRate: number; worstDay: number }; passed: boolean };
+  };
 }
 
 function LearnView({ days }: { days?: Days }) {
@@ -221,6 +224,7 @@ function LearnView({ days }: { days?: Days }) {
       <section className={card}>
         <h3 className="font-semibold">2. Learn better settings</h3>
         <p className="mb-2 text-xs text-slate-500">Tries combinations of checks, stop width, targets, short selling and patterns. Each round tries a few changes on the best settings so far and keeps the winner. More rounds = better, slower.</p>
+        <p className="mb-2 text-xs text-slate-500">Fair test: with 3 or more days, the newest days (about 1 in 4) are kept aside. The learner never sees them. At the end both the old and the new settings are played on those days, so you can see if the new settings really work or were just lucky on the old days.</p>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <label className="flex items-center gap-1">Rounds <input type="number" min={1} max={40} value={rounds} onChange={(e) => setRounds(Number(e.target.value))} className="num w-16 rounded bg-slate-800 px-2 py-1 text-right" /></label>
           <button disabled={busy || n === 0} className={btn} onClick={() => run('/api/lab/optimize', { rounds })}>Start learning</button>
@@ -235,13 +239,25 @@ function LearnView({ days }: { days?: Days }) {
         )}
         {op?.result && (
           <div className="mt-3 rounded-xl bg-slate-800/60 p-3 text-sm">
+            <p className="text-xs font-semibold text-slate-400">On the {op.result.trainDays.length} day{op.result.trainDays.length === 1 ? '' : 's'} it learned from</p>
             <div>Before: net <b className={color(op.result.start.net)}>{rupee(op.result.start.net)}</b> ({op.result.start.trades} trades, {op.result.start.winRate}% won, {op.result.start.profitableDays}/{op.result.start.days} profitable days)</div>
             <div>After: net <b className={color(op.result.best.net)}>{rupee(op.result.best.net)}</b> ({op.result.best.trades} trades, {op.result.best.winRate}% won, {op.result.best.profitableDays}/{op.result.best.days} profitable days)</div>
+            {op.result.check && (
+              <div className={`mt-2 rounded-lg p-2 ${op.result.check.passed ? 'bg-emerald-900/40' : 'bg-red-900/40'}`}>
+                <p className="text-xs font-semibold">Fair test on {op.result.check.days.length} newer day{op.result.check.days.length === 1 ? '' : 's'} it never saw ({op.result.check.days.join(', ')})</p>
+                <div>Old settings: net <b className={color(op.result.check.before.net)}>{rupee(op.result.check.before.net)}</b> ({op.result.check.before.trades} trades, worst day {rupee(op.result.check.before.worstDay)})</div>
+                <div>New settings: net <b className={color(op.result.check.after.net)}>{rupee(op.result.check.after.net)}</b> ({op.result.check.after.trades} trades, worst day {rupee(op.result.check.after.worstDay)})</div>
+                <p className="mt-1 text-xs">{op.result.check.passed ? 'Passed: the new settings also did better on days they never saw.' : 'Failed: the new settings did not do better on new days. They were probably only fitted to the old days. Better to keep your settings and learn again after more days are saved.'}</p>
+              </div>
+            )}
+            {!op.result.check && op.result.changes.length > 0 && <p className="mt-2 text-xs text-amber-300">Fewer than 3 saved days, so there was no fair test on unseen days.</p>}
             {op.result.changes.length === 0 ? <p className="mt-1 text-slate-400">Nothing better was found: your settings stay as they are.</p> : (
               <>
                 <p className="mt-2 text-xs font-semibold text-slate-400">What it would change</p>
                 <ul className="list-disc pl-5 text-xs">{op.result.changes.map((c) => <li key={c.name}>{c.name}: {c.from} → <b>{c.to}</b></li>)}</ul>
-                <button className={`${btn} mt-2`} onClick={() => { if (confirm('Apply these settings to the live (paper) trader?')) call<{ changes: unknown[] }>('/api/lab/apply').then(() => setMsg('Applied. See Settings.')).catch((e: Error) => setMsg(e.message)); }}>Apply these settings</button>
+                {op.result.check && !op.result.check.passed
+                  ? <button className={`${btn2} mt-2`} onClick={() => { if (confirm('These settings FAILED the fair test on new days. Apply them to the live (paper) trader anyway?')) call<{ changes: unknown[] }>('/api/lab/apply', { force: true }).then(() => setMsg('Applied. See Settings.')).catch((e: Error) => setMsg(e.message)); }}>Apply anyway</button>
+                  : <button className={`${btn} mt-2`} onClick={() => { if (confirm('Apply these settings to the live (paper) trader?')) call<{ changes: unknown[] }>('/api/lab/apply').then(() => setMsg('Applied. See Settings.')).catch((e: Error) => setMsg(e.message)); }}>Apply these settings</button>}
                 <p className="mt-1 text-[11px] text-amber-300">These were tuned on past days. They can be too fitted to them, so watch the paper results for a few days before trusting them.</p>
               </>
             )}
