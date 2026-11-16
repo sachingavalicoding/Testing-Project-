@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import { Db, type TradeRow } from '../src/db/db.ts';
 import { defaultSettings, validateSettings, type AppSettings } from '../src/settings.ts';
-import { ablation, evaluate, mutate, optimize, allKnobs, knobValue, rng, clone } from '../src/lab/optimize.ts';
+import { ablation, evaluate, mutate, optimize, allKnobs, knobValue, rng, clone, splitDays } from '../src/lab/optimize.ts';
 import { buildReport, exitKind } from '../src/lab/report.ts';
 import { recordStore, importHistory } from '../src/lab/recorder.ts';
 import { ReplayRun, runDay } from '../src/lab/replay.ts';
@@ -123,6 +123,28 @@ describe('learner', () => {
     expect(a.changes).toEqual(b.changes);
     expect(a.rounds).toHaveLength(2);
     expect(() => validateSettings(a.settings)).not.toThrow();
+  }, 300_000);
+
+  it('keeps the newest days aside for a fair test', () => {
+    const d = (day: string) => ({ day });
+    expect(splitDays([d('2026-11-02'), d('2026-11-01')])).toEqual({ train: [d('2026-11-01'), d('2026-11-02')], test: [] });
+    expect(splitDays([d('3'), d('1'), d('2')])).toEqual({ train: [d('1'), d('2')], test: [d('3')] });
+    const eight = splitDays(['1', '2', '3', '4', '5', '6', '7', '8'].map(d));
+    expect(eight.train.map((x) => x.day)).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(eight.test.map((x) => x.day)).toEqual(['7', '8']);
+  });
+
+  it('learns only from older days and checks the result on the newest day', async () => {
+    const three = [...days, syntheticDay('2026-11-11', 23, 30, 0.01)];
+    const r = await optimize(three, settings(), { rounds: 2, variants: 3, seed: 42 });
+    expect(r.trainDays).toEqual(['2026-11-09', '2026-11-10']);
+    expect(r.start.days).toBe(2);
+    if (r.changes.length > 0) {
+      expect(r.check?.days).toEqual(['2026-11-11']);
+      expect(r.check?.passed).toBe(r.check!.after.net > r.check!.before.net && r.check!.after.worstDay >= Math.min(r.check!.before.worstDay, 0) * 1.5);
+    } else {
+      expect(r.check).toBeUndefined();
+    }
   }, 300_000);
 
   it('can stop part way', async () => {

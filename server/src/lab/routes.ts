@@ -182,10 +182,13 @@ export function registerLab(app: FastifyInstance, deps: LabDeps): void {
   app.get('/api/lab/optimize', async () => ({ ...optJob, result: optJob.result ? { ...optJob.result, settings: undefined } : undefined }));
   app.post('/api/lab/stop', async () => { ablationJob.stop = true; optJob.stop = true; return { ok: true }; });
 
-  app.post('/api/lab/apply', async (_req, reply) => {
+  app.post<{ Body: { force?: boolean } }>('/api/lab/apply', async (req, reply) => {
     const learned = optJob.result;
     if (!learned) return reply.code(400).send(fail('Nothing learned yet'));
     if (learned.changes.length === 0) return reply.code(400).send(fail('The learner found nothing better than your current settings'));
+    if (learned.check && !learned.check.passed && !req.body?.force) {
+      return reply.code(400).send(fail('The learned settings did not do better on the newest days they never saw, so they are probably luck. Choose "Apply anyway" to use them'));
+    }
     return { ok: true, settings: deps.settings.update(applyLearned(deps.settings.get(), learned.settings)), changes: learned.changes };
   });
 }
